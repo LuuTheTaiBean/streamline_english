@@ -9,6 +9,7 @@ import {
   type ClipboardEvent,
   type MouseEvent,
 } from "react";
+import {onAuthStateChanged} from "firebase/auth";
 import {doc, getDoc, serverTimestamp, setDoc} from "firebase/firestore";
 import {Edit3, Loader2, Plus, Save, Send, Trash2, Volume2, X} from "lucide-react";
 
@@ -213,8 +214,7 @@ export function LessonNotebook({
       }
     });
 
-    async function loadRemote() {
-      const user = auth.currentUser;
+    async function loadRemote(user: NonNullable<typeof auth.currentUser>) {
       if (!user) {
         return;
       }
@@ -241,15 +241,22 @@ export function LessonNotebook({
       }
     }
 
-    loadRemote().catch((error) => {
-      if (isMounted) {
-        setStatus("error");
-        setMessage(error instanceof Error ? error.message : "Could not load notebook.");
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        return;
       }
+
+      loadRemote(user).catch((error) => {
+        if (isMounted) {
+          setStatus("error");
+          setMessage(error instanceof Error ? error.message : "Could not load notebook.");
+        }
+      });
     });
 
     return () => {
       isMounted = false;
+      unsubscribe();
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
