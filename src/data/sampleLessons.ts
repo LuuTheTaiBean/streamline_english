@@ -1,0 +1,40 @@
+import type { Lesson } from "@/types/lesson";
+
+export const sampleLessons: Lesson[] = [
+  {
+    id: "book1_unit01",
+    book: "book1",
+    unit: "01",
+    title: "Hello",
+    description: "Basic greetings and short introductory phrases.",
+    audioUrl: "",
+    lyricsUrl: "",
+    imageUrls: [],
+    order: 1,
+    isPublished: true,
+  },
+  {
+    id: "book1_unit02",
+    book: "book1",
+    unit: "02",
+    title: "Excuse me",
+    description: "Polite expressions for getting attention and asking for help.",
+    audioUrl: "",
+    lyricsUrl: "",
+    imageUrls: [],
+    order: 2,
+    isPublished: true,
+  },
+  {
+    id: "book1_unit03",
+    book: "book1",
+    unit: "03",
+    title: "What is it?",
+    description: "Simple object questions and short answers.",
+    audioUrl: "",
+    lyricsUrl: "",
+    imageUrls: [],
+    order: 3,
+    isPublished: true,
+  },
+];
