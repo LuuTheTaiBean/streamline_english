@@ -9,8 +9,8 @@ import {
   type ClipboardEvent,
   type MouseEvent,
 } from "react";
-import {onAuthStateChanged} from "firebase/auth";
-import {doc, getDoc, serverTimestamp, setDoc} from "firebase/firestore";
+import {onAuthStateChanged, type User} from "firebase/auth";
+import {doc, getDoc, onSnapshot, serverTimestamp, setDoc} from "firebase/firestore";
 import {Edit3, Loader2, Plus, Save, Send, Trash2, Volume2, X} from "lucide-react";
 
 import {auth, db} from "@/lib/firebase";
@@ -113,6 +113,8 @@ export function LessonNotebook({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pronunciationAudioRef = useRef<HTMLAudioElement | null>(null);
+  const currentUserRef = useRef<User | null>(null);
+  const localSeedRef = useRef<NotebookDraft | null>(null);
   const [tabs, setTabs] = useState<NotebookTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "sent" | "error">("idle");
@@ -137,7 +139,7 @@ export function LessonNotebook({
 
       saveLocalNotebook(lessonId, draft);
 
-      const user = auth.currentUser;
+      const user = currentUserRef.current ?? auth.currentUser;
       if (!user) {
         setStatus("saved");
         setMessage("Saved on this device.");
@@ -193,6 +195,7 @@ export function LessonNotebook({
   useEffect(() => {
     let isMounted = true;
     const local = normalizeNotebook(loadLocalNotebook(lessonId));
+    localSeedRef.current = local;
 
     queueMicrotask(() => {
       if (!isMounted) {
@@ -214,49 +217,68 @@ export function LessonNotebook({
       }
     });
 
-    async function loadRemote(user: NonNullable<typeof auth.currentUser>) {
-      if (!user) {
-        return;
-      }
-
-      const snapshot = await getDoc(
-        doc(db, "submissions", submissionDocId(lessonId, user.uid)),
-      );
-
-      if (!isMounted || !snapshot.exists()) {
-        return;
-      }
-
-      const data = snapshot.data();
-      const remote = normalizeNotebook({
-        tabs: Array.isArray(data.notes) ? data.notes : [],
-        activeTabId: typeof data.activeTabId === "string" ? data.activeTabId : null,
-        status: data.status === "submitted" ? "submitted" : "draft",
-      });
-
-      if (remote.tabs.length > 0) {
-        setTabs(remote.tabs);
-        setActiveTabId(remote.activeTabId);
-        saveLocalNotebook(lessonId, remote);
-      }
-    }
+    let unsubscribeRemote: (() => void) | null = null;
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      currentUserRef.current = user;
+      unsubscribeRemote?.();
+      unsubscribeRemote = null;
+
       if (!user) {
+        setMessage("Saved on this device.");
         return;
       }
 
-      loadRemote(user).catch((error) => {
-        if (isMounted) {
-          setStatus("error");
-          setMessage(error instanceof Error ? error.message : "Could not load notebook.");
+      const notebookRef = doc(db, "submissions", submissionDocId(lessonId, user.uid));
+
+      unsubscribeRemote = onSnapshot(
+        notebookRef,
+        (snapshot) => {
+          if (!isMounted) {
+            return;
+          }
+
+          if (!snapshot.exists()) {
+            const seed = localSeedRef.current;
+
+            if (seed?.tabs.length) {
+              void persistDraft(seed.tabs, seed.activeTabId);
+            }
+
+            return;
+          }
+
+          const data = snapshot.data();
+          const remote = normalizeNotebook({
+            tabs: Array.isArray(data.notes) ? data.notes : [],
+            activeTabId:
+              typeof data.activeTabId === "string" ? data.activeTabId : null,
+            status: data.status === "submitted" ? "submitted" : "draft",
+          });
+
+          if (remote.tabs.length === 0) {
+            return;
+          }
+
+          setTabs(remote.tabs);
+          setActiveTabId(remote.activeTabId);
+          saveLocalNotebook(lessonId, remote);
+          setStatus("saved");
+          setMessage("Synced.");
+        },
+        (error) => {
+          if (isMounted) {
+            setStatus("error");
+            setMessage(error.message || "Could not sync notebook.");
+          }
         }
-      });
+      );
     });
 
     return () => {
       isMounted = false;
       unsubscribe();
+      unsubscribeRemote?.();
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
@@ -265,7 +287,7 @@ export function LessonNotebook({
       }
       pronunciationAudioRef.current?.pause();
     };
-  }, [lessonId]);
+  }, [lessonId, persistDraft]);
 
   useEffect(() => {
     if (editorRef.current && activeTab) {
@@ -296,6 +318,31 @@ export function LessonNotebook({
 
     setTabs(nextTabs);
     scheduleSave(nextTabs, activeTabId);
+  }
+
+  function getTabsWithCurrentEditor() {
+    const editor = editorRef.current;
+
+    if (!editor || !activeTabId) {
+      return tabs;
+    }
+
+    return tabs.map((tab) =>
+      tab.id === activeTabId
+        ? {
+            ...tab,
+            contentHtml: editor.innerHTML,
+            contentText: editor.innerText,
+            updatedAt: new Date().toISOString(),
+          }
+        : tab,
+    );
+  }
+
+  function saveCurrentNotebookNow() {
+    const nextTabs = getTabsWithCurrentEditor();
+    setTabs(nextTabs);
+    void persistDraft(nextTabs, activeTabId);
   }
 
   function addTab() {
@@ -343,21 +390,8 @@ export function LessonNotebook({
   }
 
   async function submitNotebook() {
-    const user = auth.currentUser;
-    const editor = editorRef.current;
-    const currentTabs =
-      editor && activeTabId
-        ? tabs.map((tab) =>
-            tab.id === activeTabId
-              ? {
-                  ...tab,
-                  contentHtml: editor.innerHTML,
-                  contentText: editor.innerText,
-                  updatedAt: new Date().toISOString(),
-                }
-              : tab,
-          )
-        : tabs;
+    const user = currentUserRef.current ?? auth.currentUser;
+    const currentTabs = getTabsWithCurrentEditor();
 
     if (!user) {
       setStatus("error");
@@ -619,7 +653,7 @@ export function LessonNotebook({
           </button>
           <button
             type="button"
-            onClick={() => persistDraft(tabs, activeTabId)}
+            onClick={saveCurrentNotebookNow}
             className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
           >
             <Save size={15} />
