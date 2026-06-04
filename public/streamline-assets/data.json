@@ -1517,7 +1517,7 @@
     "book": "book3",
     "unit": "03: This is your life!",
     "lyrics": "./00 Lyrics/3_03.lrc",
-    "images": ["./img/3_03.webp"],
+    "images": ["./img/3_03-1.webp", "./img/3_03-2.webp", "./img/3_03-3.webp"],
     "audio": "./00 Audio/3_03.mp3",
     "questions": "./00 Questions/3_03.txt"
   },
@@ -1553,7 +1553,7 @@
     "book": "book3",
     "unit": "07: Battle of Trafalgar Street",
     "lyrics": "./00 Lyrics/3_07.lrc",
-    "images": ["./img/3_07.webp"],
+    "images": ["./img/3_07-1.webp", "./img/3_07-2.webp"],
     "audio": "./00 Audio/3_07.mp3",
     "questions": "./00 Questions/3_07.txt"
   },
@@ -1598,7 +1598,12 @@
     "book": "book3",
     "unit": "12: A trip to Spain",
     "lyrics": "./00 Lyrics/3_12.lrc",
-    "images": ["./img/3_12.webp"],
+    "images": [
+      "./img/3_12-1.webp",
+      "./img/3_12-2.webp",
+      "./img/3_12-3.webp",
+      "./img/3_12-4.webp"
+    ],
     "audio": "./00 Audio/3_12.mp3",
     "questions": "./00 Questions/3_12.txt"
   },
