@@ -114,9 +114,29 @@ export function LessonNotebook({
   const hideHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pronunciationAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentUserRef = useRef<User | null>(null);
-  const localSeedRef = useRef<NotebookDraft | null>(null);
-  const [tabs, setTabs] = useState<NotebookTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+
+  // Ref luon giu gia tri tabs moi nhat de tranh stale closure
+  const tabsRef = useRef<NotebookTab[]>([]);
+  const activeTabIdRef = useRef<string | null>(null);
+
+  // Lazy initializer: load tu localStorage ngay tai useState de tranh setState trong effect
+  const [tabs, setTabs] = useState<NotebookTab[]>(() => {
+    const local = loadLocalNotebook(lessonId);
+    if (local && local.tabs.length > 0) {
+      return local.tabs;
+    }
+    return [createTab("Notebook 1")];
+  });
+
+  const [activeTabId, setActiveTabId] = useState<string | null>(() => {
+    const local = loadLocalNotebook(lessonId);
+    if (local && local.tabs.length > 0 && local.activeTabId) {
+      return local.activeTabId;
+    }
+    // fallback: tra ve id cua tab dau tien (duoc tao dong bo o useState tabs)
+    return null;
+  });
+
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
   const [highlightDraft, setHighlightDraft] = useState<HighlightDraft | null>(null);
@@ -124,11 +144,21 @@ export function LessonNotebook({
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState("");
 
+  // Dong bo state -> ref
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId) ?? null,
     [activeTabId, tabs],
   );
 
+  // Persist draft len Firestore
   const persistDraft = useCallback(
     async (nextTabs: NotebookTab[], nextActiveTabId: string | null) => {
       const draft: NotebookDraft = {
@@ -173,6 +203,7 @@ export function LessonNotebook({
     [lessonId, lessonTitle],
   );
 
+  // Schedule save (debounce 500ms + localStorage ngay lap tuc)
   const scheduleSave = useCallback(
     (nextTabs: NotebookTab[], nextActiveTabId: string | null) => {
       saveLocalNotebook(lessonId, {
@@ -192,32 +223,76 @@ export function LessonNotebook({
     [lessonId, persistDraft],
   );
 
-  useEffect(() => {
-    let isMounted = true;
-    const local = normalizeNotebook(loadLocalNotebook(lessonId));
-    localSeedRef.current = local;
+  // Lay noi dung moi nhat tu editor (dung ref de tranh stale closure)
+  function getLatestTabsFromEditor(): NotebookTab[] {
+    const editor = editorRef.current;
+    const currentTabs = tabsRef.current;
+    const currentActiveId = activeTabIdRef.current;
 
-    queueMicrotask(() => {
-      if (!isMounted) {
+    if (!editor || !currentActiveId) {
+      return currentTabs;
+    }
+
+    return currentTabs.map((tab) =>
+      tab.id === currentActiveId
+        ? {
+            ...tab,
+            contentHtml: editor.innerHTML,
+            contentText: editor.innerText,
+            updatedAt: new Date().toISOString(),
+          }
+        : tab,
+    );
+  }
+
+  // Bao ve F5: luu editor vao localStorage truoc khi trang dong
+  useEffect(() => {
+    function handleBeforeUnload() {
+      const editor = editorRef.current;
+      const currentTabs = tabsRef.current;
+      const currentActiveId = activeTabIdRef.current;
+
+      if (!editor || !currentActiveId) {
         return;
       }
 
-      if (local.tabs.length > 0) {
-        setTabs(local.tabs);
-        setActiveTabId(local.activeTabId);
-      } else {
-        const firstTab = createTab("Notebook 1");
-        setTabs([firstTab]);
-        setActiveTabId(firstTab.id);
-        saveLocalNotebook(lessonId, {
-          tabs: [firstTab],
-          activeTabId: firstTab.id,
-          status: "draft",
-        });
-      }
-    });
+      const nextTabs = currentTabs.map((tab) =>
+        tab.id === currentActiveId
+          ? {
+              ...tab,
+              contentHtml: editor.innerHTML,
+              contentText: editor.innerText,
+              updatedAt: new Date().toISOString(),
+            }
+          : tab,
+      );
 
+      saveLocalNotebook(lessonId, {
+        tabs: nextTabs,
+        activeTabId: currentActiveId,
+        status: "draft",
+      });
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [lessonId]);
+
+  // Khoi tao & Firebase sync
+  useEffect(() => {
+    let isMounted = true;
     let unsubscribeRemote: (() => void) | null = null;
+
+    // Seed localStorage neu chua co gi
+    const local = loadLocalNotebook(lessonId);
+    if (!local || local.tabs.length === 0) {
+      const firstTab = createTab("Notebook 1");
+      saveLocalNotebook(lessonId, {
+        tabs: [firstTab],
+        activeTabId: firstTab.id,
+        status: "draft",
+      });
+    }
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       currentUserRef.current = user;
@@ -239,12 +314,11 @@ export function LessonNotebook({
           }
 
           if (!snapshot.exists()) {
-            const seed = localSeedRef.current;
-
-            if (seed?.tabs.length) {
-              void persistDraft(seed.tabs, seed.activeTabId);
+            // Chua co document tren Firestore => push local len
+            const localData = loadLocalNotebook(lessonId);
+            if (localData && localData.tabs.length > 0) {
+              void persistDraft(localData.tabs, localData.activeTabId);
             }
-
             return;
           }
 
@@ -260,6 +334,22 @@ export function LessonNotebook({
             return;
           }
 
+          // So sanh timestamp: chi apply remote neu no moi hon local
+          const localData = loadLocalNotebook(lessonId);
+          const localTabs = localData?.tabs ?? tabsRef.current;
+
+          const localMaxTime = localTabs.length
+            ? Math.max(...localTabs.map((t) => new Date(t.updatedAt).getTime()))
+            : 0;
+          const remoteMaxTime = Math.max(
+            ...remote.tabs.map((t) => new Date(t.updatedAt).getTime()),
+          );
+
+          if (remoteMaxTime <= localMaxTime) {
+            // Remote cu hon hoac bang local => khong ghi de
+            return;
+          }
+
           setTabs(remote.tabs);
           setActiveTabId(remote.activeTabId);
           saveLocalNotebook(lessonId, remote);
@@ -271,7 +361,7 @@ export function LessonNotebook({
             setStatus("error");
             setMessage(error.message || "Could not sync notebook.");
           }
-        }
+        },
       );
     });
 
@@ -289,24 +379,25 @@ export function LessonNotebook({
     };
   }, [lessonId, persistDraft]);
 
+  // Khoi phuc noi dung editor khi chuyen tab
   useEffect(() => {
     if (editorRef.current && activeTab) {
       editorRef.current.innerHTML = activeTab.contentHtml;
     }
-    // Only redraw the editor when switching tabs. Redrawing after every input
-    // would move the caret while the student is typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId]);
 
+  // Update tab dang active tu editor
   function updateActiveTabFromEditor() {
     const editor = editorRef.current;
+    const currentActiveId = activeTabIdRef.current;
 
-    if (!editor || !activeTabId) {
+    if (!editor || !currentActiveId) {
       return;
     }
 
-    const nextTabs = tabs.map((tab) =>
-      tab.id === activeTabId
+    const nextTabs = tabsRef.current.map((tab) =>
+      tab.id === currentActiveId
         ? {
             ...tab,
             contentHtml: editor.innerHTML,
@@ -317,81 +408,72 @@ export function LessonNotebook({
     );
 
     setTabs(nextTabs);
-    scheduleSave(nextTabs, activeTabId);
+    scheduleSave(nextTabs, currentActiveId);
   }
 
-  function getTabsWithCurrentEditor() {
-    const editor = editorRef.current;
-
-    if (!editor || !activeTabId) {
-      return tabs;
-    }
-
-    return tabs.map((tab) =>
-      tab.id === activeTabId
-        ? {
-            ...tab,
-            contentHtml: editor.innerHTML,
-            contentText: editor.innerText,
-            updatedAt: new Date().toISOString(),
-          }
-        : tab,
-    );
-  }
-
+  // Luu ngay lap tuc
   function saveCurrentNotebookNow() {
-    const nextTabs = getTabsWithCurrentEditor();
+    const nextTabs = getLatestTabsFromEditor();
     setTabs(nextTabs);
-    void persistDraft(nextTabs, activeTabId);
+    void persistDraft(nextTabs, activeTabIdRef.current);
   }
 
+  // Them tab moi
   function addTab() {
-    const tabName = window.prompt("Enter tab name:", `Notebook ${tabs.length + 1}`);
+    const tabName = window.prompt(
+      "Enter tab name:",
+      `Notebook ${tabsRef.current.length + 1}`,
+    );
 
     if (!tabName?.trim()) {
       return;
     }
 
     const nextTab = createTab(tabName.trim());
-    const nextTabs = [...tabs, nextTab];
+    const nextTabs = [...tabsRef.current, nextTab];
     setTabs(nextTabs);
     setActiveTabId(nextTab.id);
     scheduleSave(nextTabs, nextTab.id);
   }
 
+  // Doi ten tab
   function renameTab(tabId: string) {
-    const tab = tabs.find((item) => item.id === tabId);
+    const tab = tabsRef.current.find((item) => item.id === tabId);
     const nextName = window.prompt("Rename tab:", tab?.name ?? "");
 
     if (!nextName?.trim()) {
       return;
     }
 
-    const nextTabs = tabs.map((item) =>
+    const nextTabs = tabsRef.current.map((item) =>
       item.id === tabId ? {...item, name: nextName.trim()} : item,
     );
     setTabs(nextTabs);
-    scheduleSave(nextTabs, activeTabId);
+    scheduleSave(nextTabs, activeTabIdRef.current);
   }
 
+  // Xoa tab
   function deleteTab(tabId: string) {
-    const tab = tabs.find((item) => item.id === tabId);
+    const tab = tabsRef.current.find((item) => item.id === tabId);
 
     if (!window.confirm(`Delete "${tab?.name ?? "this tab"}"?`)) {
       return;
     }
 
-    const nextTabs = tabs.filter((item) => item.id !== tabId);
+    const nextTabs = tabsRef.current.filter((item) => item.id !== tabId);
     const nextActiveId =
-      activeTabId === tabId ? nextTabs[0]?.id ?? null : activeTabId;
+      activeTabIdRef.current === tabId
+        ? nextTabs[0]?.id ?? null
+        : activeTabIdRef.current;
     setTabs(nextTabs);
     setActiveTabId(nextActiveId);
     scheduleSave(nextTabs, nextActiveId);
   }
 
+  // Gui notebook cho giao vien
   async function submitNotebook() {
     const user = currentUserRef.current ?? auth.currentUser;
-    const currentTabs = getTabsWithCurrentEditor();
+    const currentTabs = getLatestTabsFromEditor();
 
     if (!user) {
       setStatus("error");
@@ -447,6 +529,7 @@ export function LessonNotebook({
     }
   }
 
+  // Highlight handlers
   function handleEditorMouseUp(event: MouseEvent<HTMLDivElement>) {
     const editor = editorRef.current;
     const selection = window.getSelection();
@@ -831,7 +914,7 @@ export function LessonNotebook({
               rel="noreferrer"
               className="block text-center text-xs text-slate-500 underline-offset-2 hover:text-emerald-700 hover:underline"
             >
-              Mo tren Oxford Learner&apos;s Dictionaries
+              Mo tren Oxford Learner{"'"}s Dictionaries
             </a>
           </div>
         </div>
