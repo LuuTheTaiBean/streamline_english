@@ -10,13 +10,7 @@ import {
   type MouseEvent,
 } from "react";
 import {onAuthStateChanged, type User} from "firebase/auth";
-import {
-  doc,
-  getDoc,
-  onSnapshot,
-  serverTimestamp,
-  setDoc,
-} from "firebase/firestore";
+import {doc, getDoc, onSnapshot, serverTimestamp, setDoc} from "firebase/firestore";
 import {Edit3, Loader2, Plus, Send, Trash2, Volume2, X} from "lucide-react";
 
 import {auth, db} from "@/lib/firebase";
@@ -85,10 +79,7 @@ function saveLocalNotebook(lessonId: string, data: NotebookDraft) {
     return;
   }
 
-  window.localStorage.setItem(
-    `${localPrefix}:${lessonId}`,
-    JSON.stringify(data),
-  );
+  window.localStorage.setItem(`${localPrefix}:${lessonId}`, JSON.stringify(data));
 }
 
 function normalizeNotebook(data: Partial<NotebookDraft> | null): NotebookDraft {
@@ -124,41 +115,29 @@ export function LessonNotebook({
   const pronunciationAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentUserRef = useRef<User | null>(null);
 
-  // Ref luon giu gia tri tabs moi nhat de tranh stale closure
   const tabsRef = useRef<NotebookTab[]>([]);
   const activeTabIdRef = useRef<string | null>(null);
 
-  // Lazy initializer: load tu localStorage ngay tai useState de tranh setState trong effect
-  const [tabs, setTabs] = useState<NotebookTab[]>(() => {
+  // Seed dong bo tabs + activeTabId
+  const notebookSeed = useMemo(() => {
     const local = loadLocalNotebook(lessonId);
     if (local && local.tabs.length > 0) {
-      return local.tabs;
+      return {tabs: local.tabs, activeTabId: local.activeTabId};
     }
-    return [createTab("Notebook 1")];
-  });
+    const firstTab = createTab("Notebook 1");
+    return {tabs: [firstTab], activeTabId: firstTab.id};
+  }, [lessonId]);
 
-  const [activeTabId, setActiveTabId] = useState<string | null>(() => {
-    const local = loadLocalNotebook(lessonId);
-    if (local && local.tabs.length > 0 && local.activeTabId) {
-      return local.activeTabId;
-    }
-    return null;
-  });
+  const [tabs, setTabs] = useState<NotebookTab[]>(notebookSeed.tabs);
+  const [activeTabId, setActiveTabId] = useState<string | null>(notebookSeed.activeTabId);
 
-  const [status, setStatus] = useState<
-    "idle" | "saving" | "saved" | "sent" | "error"
-  >("idle");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
-  const [highlightDraft, setHighlightDraft] = useState<HighlightDraft | null>(
-    null,
-  );
-  const [highlightHover, setHighlightHover] = useState<HighlightHover | null>(
-    null,
-  );
+  const [highlightDraft, setHighlightDraft] = useState<HighlightDraft | null>(null);
+  const [highlightHover, setHighlightHover] = useState<HighlightHover | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState("");
 
-  // Dong bo state -> ref
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
@@ -172,15 +151,21 @@ export function LessonNotebook({
     [activeTabId, tabs],
   );
 
-  // Persist draft len Firestore
+  // Seed localStorage neu chua co
+  useEffect(() => {
+    const local = loadLocalNotebook(lessonId);
+    if (!local || local.tabs.length === 0) {
+      saveLocalNotebook(lessonId, {
+        tabs: notebookSeed.tabs,
+        activeTabId: notebookSeed.activeTabId,
+        status: "draft",
+      });
+    }
+  }, [lessonId, notebookSeed]);
+
   const persistDraft = useCallback(
     async (nextTabs: NotebookTab[], nextActiveTabId: string | null) => {
-      const draft: NotebookDraft = {
-        tabs: nextTabs,
-        activeTabId: nextActiveTabId,
-        status: "draft",
-      };
-
+      const draft: NotebookDraft = {tabs: nextTabs, activeTabId: nextActiveTabId, status: "draft"};
       saveLocalNotebook(lessonId, draft);
 
       const user = currentUserRef.current ?? auth.currentUser;
@@ -191,7 +176,6 @@ export function LessonNotebook({
       }
 
       setStatus("saving");
-
       try {
         await setDoc(
           doc(db, "submissions", submissionDocId(lessonId, user.uid)),
@@ -210,7 +194,6 @@ export function LessonNotebook({
         setStatus("saved");
         setMessage("Saved.");
       } catch {
-        // Firebase error (e.g. Missing or insufficient permissions) => still saved locally
         setStatus("saved");
         setMessage("Saved on this device.");
       }
@@ -218,96 +201,47 @@ export function LessonNotebook({
     [lessonId, lessonTitle],
   );
 
-  // Schedule save (debounce 500ms + localStorage ngay lap tuc)
   const scheduleSave = useCallback(
     (nextTabs: NotebookTab[], nextActiveTabId: string | null) => {
-      saveLocalNotebook(lessonId, {
-        tabs: nextTabs,
-        activeTabId: nextActiveTabId,
-        status: "draft",
-      });
-
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-
-      saveTimerRef.current = setTimeout(() => {
-        persistDraft(nextTabs, nextActiveTabId);
-      }, 500);
+      saveLocalNotebook(lessonId, {tabs: nextTabs, activeTabId: nextActiveTabId, status: "draft"});
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => persistDraft(nextTabs, nextActiveTabId), 500);
     },
     [lessonId, persistDraft],
   );
 
-  // Lay noi dung moi nhat tu editor (dung ref de tranh stale closure)
   function getLatestTabsFromEditor(): NotebookTab[] {
     const editor = editorRef.current;
     const currentTabs = tabsRef.current;
     const currentActiveId = activeTabIdRef.current;
-
-    if (!editor || !currentActiveId) {
-      return currentTabs;
-    }
-
+    if (!editor || !currentActiveId) return currentTabs;
     return currentTabs.map((tab) =>
       tab.id === currentActiveId
-        ? {
-            ...tab,
-            contentHtml: editor.innerHTML,
-            contentText: editor.innerText,
-            updatedAt: new Date().toISOString(),
-          }
+        ? {...tab, contentHtml: editor.innerHTML, contentText: editor.innerText, updatedAt: new Date().toISOString()}
         : tab,
     );
   }
 
-  // Bao ve F5: luu editor vao localStorage truoc khi trang dong
   useEffect(() => {
     function handleBeforeUnload() {
       const editor = editorRef.current;
       const currentTabs = tabsRef.current;
       const currentActiveId = activeTabIdRef.current;
-
-      if (!editor || !currentActiveId) {
-        return;
-      }
-
+      if (!editor || !currentActiveId) return;
       const nextTabs = currentTabs.map((tab) =>
         tab.id === currentActiveId
-          ? {
-              ...tab,
-              contentHtml: editor.innerHTML,
-              contentText: editor.innerText,
-              updatedAt: new Date().toISOString(),
-            }
+          ? {...tab, contentHtml: editor.innerHTML, contentText: editor.innerText, updatedAt: new Date().toISOString()}
           : tab,
       );
-
-      saveLocalNotebook(lessonId, {
-        tabs: nextTabs,
-        activeTabId: currentActiveId,
-        status: "draft",
-      });
+      saveLocalNotebook(lessonId, {tabs: nextTabs, activeTabId: currentActiveId, status: "draft"});
     }
-
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [lessonId]);
 
-  // Khoi tao & Firebase sync
   useEffect(() => {
     let isMounted = true;
     let unsubscribeRemote: (() => void) | null = null;
-
-    // Seed localStorage neu chua co gi
-    const local = loadLocalNotebook(lessonId);
-    if (!local || local.tabs.length === 0) {
-      const firstTab = createTab("Notebook 1");
-      saveLocalNotebook(lessonId, {
-        tabs: [firstTab],
-        activeTabId: firstTab.id,
-        status: "draft",
-      });
-    }
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       currentUserRef.current = user;
@@ -319,21 +253,14 @@ export function LessonNotebook({
         return;
       }
 
-      const notebookRef = doc(
-        db,
-        "submissions",
-        submissionDocId(lessonId, user.uid),
-      );
+      const notebookRef = doc(db, "submissions", submissionDocId(lessonId, user.uid));
 
       unsubscribeRemote = onSnapshot(
         notebookRef,
         (snapshot) => {
-          if (!isMounted) {
-            return;
-          }
+          if (!isMounted) return;
 
           if (!snapshot.exists()) {
-            // Chua co document tren Firestore => push local len
             const localData = loadLocalNotebook(lessonId);
             if (localData && localData.tabs.length > 0) {
               void persistDraft(localData.tabs, localData.activeTabId);
@@ -344,30 +271,18 @@ export function LessonNotebook({
           const data = snapshot.data();
           const remote = normalizeNotebook({
             tabs: Array.isArray(data.notes) ? data.notes : [],
-            activeTabId:
-              typeof data.activeTabId === "string" ? data.activeTabId : null,
+            activeTabId: typeof data.activeTabId === "string" ? data.activeTabId : null,
             status: data.status === "submitted" ? "submitted" : "draft",
           });
 
-          if (remote.tabs.length === 0) {
-            return;
-          }
+          if (remote.tabs.length === 0) return;
 
-          // So sanh timestamp: chi apply remote neu no moi hon local
           const localData = loadLocalNotebook(lessonId);
           const localTabs = localData?.tabs ?? tabsRef.current;
+          const localMaxTime = localTabs.length ? Math.max(...localTabs.map((t) => new Date(t.updatedAt).getTime())) : 0;
+          const remoteMaxTime = Math.max(...remote.tabs.map((t) => new Date(t.updatedAt).getTime()));
 
-          const localMaxTime = localTabs.length
-            ? Math.max(...localTabs.map((t) => new Date(t.updatedAt).getTime()))
-            : 0;
-          const remoteMaxTime = Math.max(
-            ...remote.tabs.map((t) => new Date(t.updatedAt).getTime()),
-          );
-
-          if (remoteMaxTime <= localMaxTime) {
-            // Remote cu hon hoac bang local => khong ghi de
-            return;
-          }
+          if (remoteMaxTime <= localMaxTime) return;
 
           setTabs(remote.tabs);
           setActiveTabId(remote.activeTabId);
@@ -388,17 +303,12 @@ export function LessonNotebook({
       isMounted = false;
       unsubscribe();
       unsubscribeRemote?.();
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-      if (hideHoverTimerRef.current) {
-        clearTimeout(hideHoverTimerRef.current);
-      }
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (hideHoverTimerRef.current) clearTimeout(hideHoverTimerRef.current);
       pronunciationAudioRef.current?.pause();
     };
   }, [lessonId, persistDraft]);
 
-  // Khoi phuc noi dung editor khi chuyen tab
   useEffect(() => {
     if (editorRef.current && activeTab) {
       editorRef.current.innerHTML = activeTab.contentHtml;
@@ -406,41 +316,22 @@ export function LessonNotebook({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId]);
 
-  // Update tab dang active tu editor
   function updateActiveTabFromEditor() {
     const editor = editorRef.current;
     const currentActiveId = activeTabIdRef.current;
-
-    if (!editor || !currentActiveId) {
-      return;
-    }
-
+    if (!editor || !currentActiveId) return;
     const nextTabs = tabsRef.current.map((tab) =>
       tab.id === currentActiveId
-        ? {
-            ...tab,
-            contentHtml: editor.innerHTML,
-            contentText: editor.innerText,
-            updatedAt: new Date().toISOString(),
-          }
+        ? {...tab, contentHtml: editor.innerHTML, contentText: editor.innerText, updatedAt: new Date().toISOString()}
         : tab,
     );
-
     setTabs(nextTabs);
     scheduleSave(nextTabs, currentActiveId);
   }
 
-  // Them tab moi
   function addTab() {
-    const tabName = window.prompt(
-      "Enter tab name:",
-      `Notebook ${tabsRef.current.length + 1}`,
-    );
-
-    if (!tabName?.trim()) {
-      return;
-    }
-
+    const tabName = window.prompt("Enter tab name:", `Notebook ${tabsRef.current.length + 1}`);
+    if (!tabName?.trim()) return;
     const nextTab = createTab(tabName.trim());
     const nextTabs = [...tabsRef.current, nextTab];
     setTabs(nextTabs);
@@ -448,15 +339,10 @@ export function LessonNotebook({
     scheduleSave(nextTabs, nextTab.id);
   }
 
-  // Doi ten tab
   function renameTab(tabId: string) {
     const tab = tabsRef.current.find((item) => item.id === tabId);
     const nextName = window.prompt("Rename tab:", tab?.name ?? "");
-
-    if (!nextName?.trim()) {
-      return;
-    }
-
+    if (!nextName?.trim()) return;
     const nextTabs = tabsRef.current.map((item) =>
       item.id === tabId ? {...item, name: nextName.trim()} : item,
     );
@@ -464,51 +350,34 @@ export function LessonNotebook({
     scheduleSave(nextTabs, activeTabIdRef.current);
   }
 
-  // Xoa tab
   function deleteTab(tabId: string) {
-    const tab = tabsRef.current.find((item) => item.id === tabId);
-
-    if (!window.confirm(`Delete "${tab?.name ?? "this tab"}"?`)) {
-      return;
-    }
-
-    const nextTabs = tabsRef.current.filter((item) => item.id !== tabId);
-    const nextActiveId =
-      activeTabIdRef.current === tabId
-        ? (nextTabs[0]?.id ?? null)
-        : activeTabIdRef.current;
+    // Capture editor content truoc khi xoa
+    const currentTabs = getLatestTabsFromEditor();
+    const tab = currentTabs.find((item) => item.id === tabId);
+    if (!window.confirm(`Delete "${tab?.name ?? "this tab"}"?`)) return;
+    const nextTabs = currentTabs.filter((item) => item.id !== tabId);
+    const nextActiveId = activeTabIdRef.current === tabId ? nextTabs[0]?.id ?? null : activeTabIdRef.current;
     setTabs(nextTabs);
     setActiveTabId(nextActiveId);
     scheduleSave(nextTabs, nextActiveId);
   }
 
-  // Gui notebook cho giao vien
   async function submitNotebook() {
     const user = currentUserRef.current ?? auth.currentUser;
     const currentTabs = getLatestTabsFromEditor();
-
     if (!user) {
       setStatus("error");
       setMessage("Please log in before sending notebook.");
       return;
     }
-
-    if (
-      currentTabs.length === 0 ||
-      !window.confirm("Send this notebook to teacher?")
-    ) {
-      return;
-    }
+    if (currentTabs.length === 0 || !window.confirm("Send this notebook to teacher?")) return;
 
     setTabs(currentTabs);
     setStatus("saving");
 
     try {
       const userDoc = await getDoc(doc(db, "users", user.uid));
-      const userName =
-        typeof userDoc.data()?.fullname === "string"
-          ? userDoc.data()?.fullname
-          : "Unknown";
+      const userName = typeof userDoc.data()?.fullname === "string" ? userDoc.data()?.fullname : "Unknown";
 
       await setDoc(
         doc(db, "submissions", submissionDocId(lessonId, user.uid)),
@@ -527,12 +396,7 @@ export function LessonNotebook({
         {merge: true},
       );
 
-      saveLocalNotebook(lessonId, {
-        tabs: currentTabs,
-        activeTabId,
-        status: "submitted",
-        submittedAt: new Date().toISOString(),
-      });
+      saveLocalNotebook(lessonId, {tabs: currentTabs, activeTabId, status: "submitted", submittedAt: new Date().toISOString()});
       setStatus("sent");
       setMessage("Sent to teacher.");
     } catch {
@@ -541,27 +405,12 @@ export function LessonNotebook({
     }
   }
 
-  // Highlight handlers
   function handleEditorMouseUp(event: MouseEvent<HTMLDivElement>) {
     const editor = editorRef.current;
     const selection = window.getSelection();
-
-    if (
-      !editor ||
-      !selection ||
-      selection.isCollapsed ||
-      selection.rangeCount === 0 ||
-      !editor.contains(selection.getRangeAt(0).commonAncestorContainer)
-    ) {
-      return;
-    }
-
+    if (!editor || !selection || selection.isCollapsed || selection.rangeCount === 0 || !editor.contains(selection.getRangeAt(0).commonAncestorContainer)) return;
     const word = selection.toString().trim();
-
-    if (!word) {
-      return;
-    }
-
+    if (!word) return;
     setHighlightDraft({
       x: Math.min(event.clientX + 12, window.innerWidth - 300),
       y: Math.min(event.clientY + 12, window.innerHeight - 220),
@@ -572,18 +421,13 @@ export function LessonNotebook({
   }
 
   function saveHighlight() {
-    if (!highlightDraft) {
-      return;
-    }
-
+    if (!highlightDraft) return;
     const span = document.createElement("span");
-    span.className =
-      "cursor-help rounded-sm bg-amber-200/90 px-0.5 underline decoration-amber-500/70 decoration-2 underline-offset-2";
+    span.className = "cursor-help rounded-sm bg-amber-200/90 px-0.5 underline decoration-amber-500/70 decoration-2 underline-offset-2";
     span.dataset.notebookHighlight = "true";
     span.dataset.word = highlightDraft.word;
     span.dataset.note = highlightDraft.note;
     span.title = highlightDraft.note || highlightDraft.word;
-
     try {
       highlightDraft.range.surroundContents(span);
     } catch {
@@ -591,7 +435,6 @@ export function LessonNotebook({
       span.appendChild(content);
       highlightDraft.range.insertNode(span);
     }
-
     window.getSelection()?.removeAllRanges();
     setHighlightDraft(null);
     updateActiveTabFromEditor();
@@ -607,56 +450,32 @@ export function LessonNotebook({
   async function handleHighlightEnter(element: HTMLElement) {
     clearHideHoverTimer();
     setAudioError("");
-
     const rect = element.getBoundingClientRect();
     const word = element.dataset.word || element.textContent?.trim() || "";
     const note = element.dataset.note || element.title || "";
-    const panelWidth = 288;
-    const panelHeight = 180;
-
-    if (!word) {
-      return;
-    }
-
+    if (!word) return;
     setHighlightHover({
-      x: Math.min(rect.right + 12, window.innerWidth - panelWidth - 12),
-      y: Math.min(rect.top, window.innerHeight - panelHeight - 12),
+      x: Math.min(rect.right + 12, window.innerWidth - 300),
+      y: Math.min(rect.top, window.innerHeight - 192),
       word,
       note,
       element,
     });
-
     try {
-      const response = await fetch(
-        `/api/oxford-pronunciation?word=${encodeURIComponent(word)}&lang=uk`,
-      );
-      const data = (await response.json()) as {
-        phonetics?: string;
-      };
-
+      const response = await fetch(`/api/oxford-pronunciation?word=${encodeURIComponent(word)}&lang=uk`);
+      const data = (await response.json()) as {phonetics?: string};
       if (data.phonetics) {
-        setHighlightHover((current) =>
-          current?.word === word
-            ? {...current, phonetics: data.phonetics}
-            : current,
-        );
+        setHighlightHover((current) => (current?.word === word ? {...current, phonetics: data.phonetics} : current));
       }
     } catch {
-      // Phonetics is optional; keep the hover panel visible.
+      // Phonetics is optional
     }
   }
 
   function handleEditorMouseOver(event: MouseEvent<HTMLDivElement>) {
     const target = event.target;
-
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-
-    const highlight = target.closest<HTMLElement>(
-      "[data-notebook-highlight='true']",
-    );
-
+    if (!(target instanceof HTMLElement)) return;
+    const highlight = target.closest<HTMLElement>("[data-notebook-highlight='true']");
     if (highlight && editorRef.current?.contains(highlight)) {
       void handleHighlightEnter(highlight);
     }
@@ -664,41 +483,23 @@ export function LessonNotebook({
 
   function handleEditorMouseOut(event: MouseEvent<HTMLDivElement>) {
     const target = event.target;
-
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-
+    if (!(target instanceof HTMLElement)) return;
     const highlight = target.closest("[data-notebook-highlight='true']");
-
-    if (!highlight) {
-      return;
-    }
-
+    if (!highlight) return;
     clearHideHoverTimer();
-    hideHoverTimerRef.current = setTimeout(() => {
-      setHighlightHover(null);
-    }, 180);
+    hideHoverTimerRef.current = setTimeout(() => setHighlightHover(null), 180);
   }
 
   async function playPronunciation(word: string) {
     setAudioError("");
     setIsAudioLoading(true);
-
     try {
-      const response = await fetch(
-        `/api/oxford-pronunciation?word=${encodeURIComponent(word)}&lang=uk`,
-      );
-      const data = (await response.json()) as {
-        audioUrl?: string;
-        error?: string;
-      };
-
+      const response = await fetch(`/api/oxford-pronunciation?word=${encodeURIComponent(word)}&lang=uk`);
+      const data = (await response.json()) as {audioUrl?: string; error?: string};
       if (!response.ok || !data.audioUrl) {
         setAudioError(data.error ?? "Khong tim thay phat am.");
         return;
       }
-
       pronunciationAudioRef.current?.pause();
       const audio = new Audio(data.audioUrl);
       pronunciationAudioRef.current = audio;
@@ -711,22 +512,14 @@ export function LessonNotebook({
   }
 
   function deleteHoveredHighlight() {
-    if (!highlightHover) {
-      return;
-    }
-
+    if (!highlightHover) return;
     const {element} = highlightHover;
     const parent = element.parentNode;
-
     if (!parent) {
       setHighlightHover(null);
       return;
     }
-
-    while (element.firstChild) {
-      parent.insertBefore(element.firstChild, element);
-    }
-
+    while (element.firstChild) parent.insertBefore(element.firstChild, element);
     parent.removeChild(element);
     setHighlightHover(null);
     updateActiveTabFromEditor();
@@ -759,11 +552,7 @@ export function LessonNotebook({
             Send
           </button>
         </div>
-        <p
-          className={`text-xs ${
-            status === "error" ? "text-red-600" : "text-slate-500"
-          }`}
-        >
+        <p className={`text-xs ${status === "error" ? "text-red-600" : "text-slate-500"}`}>
           {message || "Auto-save is on."}
         </p>
       </div>
@@ -778,28 +567,13 @@ export function LessonNotebook({
                 : "border-slate-200 bg-slate-50 text-slate-700"
             }`}
           >
-            <button
-              type="button"
-              onClick={() => setActiveTabId(tab.id)}
-              className="max-w-40 truncate px-1 py-1 font-semibold"
-              title={tab.name}
-            >
+            <button type="button" onClick={() => setActiveTabId(tab.id)} className="max-w-40 truncate px-1 py-1 font-semibold" title={tab.name}>
               {tab.name}
             </button>
-            <button
-              type="button"
-              onClick={() => renameTab(tab.id)}
-              className="rounded p-1 hover:bg-white"
-              title="Rename"
-            >
+            <button type="button" onClick={() => renameTab(tab.id)} className="rounded p-1 hover:bg-white" title="Rename">
               <Edit3 size={13} />
             </button>
-            <button
-              type="button"
-              onClick={() => deleteTab(tab.id)}
-              className="rounded p-1 text-red-600 hover:bg-white"
-              title="Delete"
-            >
+            <button type="button" onClick={() => deleteTab(tab.id)} className="rounded p-1 text-red-600 hover:bg-white" title="Delete">
               <Trash2 size={13} />
             </button>
           </div>
@@ -816,46 +590,25 @@ export function LessonNotebook({
         onMouseOut={handleEditorMouseOut}
         onPaste={handlePaste}
         className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-300 bg-white p-4 text-base leading-7 text-slate-900 outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)] focus:border-emerald-500"
-        data-placeholder={
-          activeTab
-            ? "Write your notes here..."
-            : "Click + Tab to start writing..."
-        }
+        data-placeholder="Write your notes here..."
       />
 
       {highlightDraft ? (
-        <div
-          className="fixed z-50 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-xl"
-          style={{left: highlightDraft.x, top: highlightDraft.y}}
-        >
+        <div className="fixed z-50 w-72 rounded-lg border border-slate-200 bg-white p-3 shadow-xl" style={{left: highlightDraft.x, top: highlightDraft.y}}>
           <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="truncate text-sm font-semibold text-amber-800">
-              {highlightDraft.word}
-            </p>
-            <button
-              type="button"
-              onClick={() => setHighlightDraft(null)}
-              className="rounded-full p-1 text-slate-500 hover:bg-slate-100"
-            >
+            <p className="truncate text-sm font-semibold text-amber-800">{highlightDraft.word}</p>
+            <button type="button" onClick={() => setHighlightDraft(null)} className="rounded-full p-1 text-slate-500 hover:bg-slate-100">
               <X size={14} />
             </button>
           </div>
           <textarea
             value={highlightDraft.note}
-            onChange={(event) =>
-              setHighlightDraft((value) =>
-                value ? {...value, note: event.target.value} : value,
-              )
-            }
+            onChange={(event) => setHighlightDraft((value) => (value ? {...value, note: event.target.value} : value))}
             className="min-h-20 w-full rounded-md border border-slate-300 p-2 text-sm outline-none focus:border-emerald-500"
             placeholder="Ghi nghia, ghi chu..."
             autoFocus
           />
-          <button
-            type="button"
-            onClick={saveHighlight}
-            className="mt-2 w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-          >
+          <button type="button" onClick={saveHighlight} className="mt-2 w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
             Save highlight
           </button>
         </div>
@@ -869,27 +622,14 @@ export function LessonNotebook({
           onMouseLeave={() => setHighlightHover(null)}
         >
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
-            <span className="truncate text-sm font-semibold text-amber-800">
-              {highlightHover.word}
-            </span>
-            <button
-              type="button"
-              onClick={() => setHighlightHover(null)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"
-              title="Dong"
-            >
+            <span className="truncate text-sm font-semibold text-amber-800">{highlightHover.word}</span>
+            <button type="button" onClick={() => setHighlightHover(null)} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100" title="Dong">
               <X size={14} />
             </button>
           </div>
           <div className="space-y-2 p-3">
-            {highlightHover.phonetics ? (
-              <p className="text-sm font-semibold text-slate-600">
-                {`/${highlightHover.phonetics.replace(/^\/+|\/+$/g, "")}/`}
-              </p>
-            ) : null}
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-              {highlightHover.note || "(Chua co ghi chu)"}
-            </p>
+            {highlightHover.phonetics ? <p className="text-sm font-semibold text-slate-600">{`/${highlightHover.phonetics.replace(/^\/+|\/+$/g, "")}/`}</p> : null}
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{highlightHover.note || "(Chua co ghi chu)"}</p>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -898,11 +638,7 @@ export function LessonNotebook({
                 className="flex flex-1 items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
                 title="Nghe phat am (Oxford)"
               >
-                {isAudioLoading ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Volume2 size={14} />
-                )}
+                {isAudioLoading ? <Loader2 size={14} className="animate-spin" /> : <Volume2 size={14} />}
                 Nghe
               </button>
               <button
@@ -915,9 +651,7 @@ export function LessonNotebook({
                 Xoa
               </button>
             </div>
-            {audioError ? (
-              <p className="text-xs text-red-600">{audioError}</p>
-            ) : null}
+            {audioError ? <p className="text-xs text-red-600">{audioError}</p> : null}
             <a
               href={`https://www.oxfordlearnersdictionaries.com/definition/english/${encodeURIComponent(highlightHover.word.toLowerCase())}`}
               target="_blank"
