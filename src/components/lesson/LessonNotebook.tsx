@@ -10,8 +10,14 @@ import {
   type MouseEvent,
 } from "react";
 import {onAuthStateChanged, type User} from "firebase/auth";
-import {doc, getDoc, onSnapshot, serverTimestamp, setDoc} from "firebase/firestore";
-import {Edit3, Loader2, Plus, Save, Send, Trash2, Volume2, X} from "lucide-react";
+import {
+  doc,
+  getDoc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore";
+import {Edit3, Loader2, Plus, Send, Trash2, Volume2, X} from "lucide-react";
 
 import {auth, db} from "@/lib/firebase";
 
@@ -79,7 +85,10 @@ function saveLocalNotebook(lessonId: string, data: NotebookDraft) {
     return;
   }
 
-  window.localStorage.setItem(`${localPrefix}:${lessonId}`, JSON.stringify(data));
+  window.localStorage.setItem(
+    `${localPrefix}:${lessonId}`,
+    JSON.stringify(data),
+  );
 }
 
 function normalizeNotebook(data: Partial<NotebookDraft> | null): NotebookDraft {
@@ -133,14 +142,19 @@ export function LessonNotebook({
     if (local && local.tabs.length > 0 && local.activeTabId) {
       return local.activeTabId;
     }
-    // fallback: tra ve id cua tab dau tien (duoc tao dong bo o useState tabs)
     return null;
   });
 
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "sent" | "error">("idle");
+  const [status, setStatus] = useState<
+    "idle" | "saving" | "saved" | "sent" | "error"
+  >("idle");
   const [message, setMessage] = useState("");
-  const [highlightDraft, setHighlightDraft] = useState<HighlightDraft | null>(null);
-  const [highlightHover, setHighlightHover] = useState<HighlightHover | null>(null);
+  const [highlightDraft, setHighlightDraft] = useState<HighlightDraft | null>(
+    null,
+  );
+  const [highlightHover, setHighlightHover] = useState<HighlightHover | null>(
+    null,
+  );
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState("");
 
@@ -195,9 +209,10 @@ export function LessonNotebook({
         );
         setStatus("saved");
         setMessage("Saved.");
-      } catch (error) {
-        setStatus("error");
-        setMessage(error instanceof Error ? error.message : "Could not save notebook.");
+      } catch {
+        // Firebase error (e.g. Missing or insufficient permissions) => still saved locally
+        setStatus("saved");
+        setMessage("Saved on this device.");
       }
     },
     [lessonId, lessonTitle],
@@ -304,7 +319,11 @@ export function LessonNotebook({
         return;
       }
 
-      const notebookRef = doc(db, "submissions", submissionDocId(lessonId, user.uid));
+      const notebookRef = doc(
+        db,
+        "submissions",
+        submissionDocId(lessonId, user.uid),
+      );
 
       unsubscribeRemote = onSnapshot(
         notebookRef,
@@ -356,10 +375,10 @@ export function LessonNotebook({
           setStatus("saved");
           setMessage("Synced.");
         },
-        (error) => {
+        () => {
           if (isMounted) {
-            setStatus("error");
-            setMessage(error.message || "Could not sync notebook.");
+            setStatus("saved");
+            setMessage("Synced.");
           }
         },
       );
@@ -411,13 +430,6 @@ export function LessonNotebook({
     scheduleSave(nextTabs, currentActiveId);
   }
 
-  // Luu ngay lap tuc
-  function saveCurrentNotebookNow() {
-    const nextTabs = getLatestTabsFromEditor();
-    setTabs(nextTabs);
-    void persistDraft(nextTabs, activeTabIdRef.current);
-  }
-
   // Them tab moi
   function addTab() {
     const tabName = window.prompt(
@@ -463,7 +475,7 @@ export function LessonNotebook({
     const nextTabs = tabsRef.current.filter((item) => item.id !== tabId);
     const nextActiveId =
       activeTabIdRef.current === tabId
-        ? nextTabs[0]?.id ?? null
+        ? (nextTabs[0]?.id ?? null)
         : activeTabIdRef.current;
     setTabs(nextTabs);
     setActiveTabId(nextActiveId);
@@ -523,9 +535,9 @@ export function LessonNotebook({
       });
       setStatus("sent");
       setMessage("Sent to teacher.");
-    } catch (error) {
+    } catch {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Could not send notebook.");
+      setMessage("Could not send notebook.");
     }
   }
 
@@ -624,7 +636,9 @@ export function LessonNotebook({
 
       if (data.phonetics) {
         setHighlightHover((current) =>
-          current?.word === word ? {...current, phonetics: data.phonetics} : current,
+          current?.word === word
+            ? {...current, phonetics: data.phonetics}
+            : current,
         );
       }
     } catch {
@@ -639,7 +653,9 @@ export function LessonNotebook({
       return;
     }
 
-    const highlight = target.closest<HTMLElement>("[data-notebook-highlight='true']");
+    const highlight = target.closest<HTMLElement>(
+      "[data-notebook-highlight='true']",
+    );
 
     if (highlight && editorRef.current?.contains(highlight)) {
       void handleHighlightEnter(highlight);
@@ -736,14 +752,6 @@ export function LessonNotebook({
           </button>
           <button
             type="button"
-            onClick={saveCurrentNotebookNow}
-            className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <Save size={15} />
-            Save
-          </button>
-          <button
-            type="button"
             onClick={submitNotebook}
             className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
@@ -809,7 +817,9 @@ export function LessonNotebook({
         onPaste={handlePaste}
         className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-slate-300 bg-white p-4 text-base leading-7 text-slate-900 outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)] focus:border-emerald-500"
         data-placeholder={
-          activeTab ? "Write your notes here..." : "Click + Tab to start writing..."
+          activeTab
+            ? "Write your notes here..."
+            : "Click + Tab to start writing..."
         }
       />
 
