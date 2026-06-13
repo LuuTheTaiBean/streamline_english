@@ -1,6 +1,12 @@
 "use client";
 
-import {useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent} from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   FileQuestion,
   FolderClosed,
@@ -18,6 +24,7 @@ import {LessonNotebook} from "@/components/lesson/LessonNotebook";
 import {LyricsWithVocabMarks} from "@/components/lesson/LyricsWithVocabMarks";
 import {getLegacyLessons} from "@/lib/lessons";
 import {logout} from "@/lib/auth";
+import {loadDividerPct, saveDividerPct} from "@/lib/lessonLayout";
 import type {Lesson} from "@/types/lesson";
 
 type LyricLine = {
@@ -69,7 +76,9 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
   const [repeatRemaining, setRepeatRemaining] = useState(0);
   const [hideImage, setHideImage] = useState(false);
   const [hideText, setHideText] = useState(false);
-  const [panel, setPanel] = useState<"settings" | "questions" | "notebook" | null>(null);
+  const [panel, setPanel] = useState<
+    "settings" | "questions" | "notebook" | null
+  >(null);
   const [questions, setQuestions] = useState<string[]>([]);
   const [theme, setTheme] = useState({
     background: "#f1f5f9",
@@ -78,6 +87,47 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [dividerPct, setDividerPct] = useState(loadDividerPct);
+  const [xl, setXl] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dividerPctRef = useRef(dividerPct);
+
+  useEffect(() => {
+    dividerPctRef.current = dividerPct;
+  }, [dividerPct]);
+
+  // Detect xl breakpoint (>= 1280px)
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(min-width: 1280px)");
+
+    function handleChange(event: MediaQueryListEvent | MediaQueryList) {
+      setXl(event.matches);
+    }
+
+    handleChange(mediaQuery);
+    mediaQuery.addEventListener("change", handleChange);
+
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  function handleDividerResize(clientX: number) {
+    const container = containerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const pct = Math.min(Math.max((x / rect.width) * 100, 20), 80);
+
+    setDividerPct(pct);
+    dividerPctRef.current = pct;
+  }
+
+  function handleDividerUp() {
+    saveDividerPct(dividerPctRef.current);
+  }
 
   function syncRepeatState(times: number, remaining: number) {
     repeatTimesRef.current = times;
@@ -388,8 +438,17 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
           </span>
         </button>
 
-        <div className="grid min-h-0 flex-1 grid-rows-2 gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(0,1.25fr)] xl:grid-rows-1">
-          <div className="flex min-h-0 flex-col">
+        <div
+          ref={containerRef}
+          className="flex min-h-0 flex-1 flex-col gap-0 xl:flex-row"
+        >
+          <div
+            className="flex min-h-0 flex-col"
+            style={{
+              flex: xl ? `0 0 ${dividerPct}%` : undefined,
+              minWidth: xl ? 200 : undefined,
+            }}
+          >
             <div className="flex h-full min-h-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               {currentImage && !hideImage ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -432,30 +491,42 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
             />
           </div>
 
+          <ResizableDivider onResize={handleDividerResize} onUp={handleDividerUp} />
+
           <div
-            className="h-full min-h-0 overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
-            style={{fontSize: theme.fontSize}}
+            className="flex min-h-0 flex-col"
+            style={{
+              flex: xl ? `1 1 ${100 - dividerPct}%` : undefined,
+              minWidth: xl ? 200 : undefined,
+            }}
           >
-            {lyrics.length > 0 && !hideText ? (
-              <LyricsWithVocabMarks
-                lessonId={lessonId}
-                lyrics={lyrics}
-                activeIndex={activeIndex}
-                activeLineRef={activeLineRef}
-                fontSize={theme.fontSize}
-                onLineClick={playFromLine}
-              />
-            ) : hideText && lyrics.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setHideText(false)}
-                className="flex h-full min-h-0 w-full items-center justify-center rounded-md bg-slate-50 text-sm font-semibold text-slate-500"
-              >
-                Lyrics đang ẩn. Bấm để hiện lại.
-              </button>
-            ) : (
-              <p className="text-sm text-slate-500">Bai nay chua co lyrics.</p>
-            )}
+            <div
+              className="h-full min-h-0 overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+              style={{fontSize: theme.fontSize}}
+            >
+              {lyrics.length > 0 && !hideText ? (
+                <LyricsWithVocabMarks
+                  lessonId={lessonId}
+                  lyrics={lyrics}
+                  activeIndex={activeIndex}
+                  activeLineRef={activeLineRef}
+                  fontSize={theme.fontSize}
+                  onLineClick={playFromLine}
+                />
+              ) : hideText && lyrics.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setHideText(false)}
+                  className="flex h-full min-h-0 w-full items-center justify-center rounded-md bg-slate-50 text-sm font-semibold text-slate-500"
+                >
+                  Lyrics đang ẩn. Bấm để hiện lại.
+                </button>
+              ) : (
+                <p className="text-sm text-slate-500">
+                  Bai nay chua co lyrics.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </section>
@@ -547,7 +618,6 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
         {panel === "notebook" ? (
           <LessonNotebook lessonId={lessonId} lessonTitle={lesson.title} />
         ) : null}
-
       </SlidePanel>
     </div>
   );
@@ -677,6 +747,54 @@ function FloatingToolbar({
   );
 }
 
+function ResizableDivider({onResize, onUp}: {onResize: (clientX: number) => void; onUp?: () => void}) {
+  const isDraggingRef = useRef(false);
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    isDraggingRef.current = true;
+    onResize(event.clientX);
+
+    function handleMove(moveEvent: PointerEvent) {
+      if (!isDraggingRef.current) return;
+      onResize(moveEvent.clientX);
+    }
+
+    function handleUp() {
+      isDraggingRef.current = false;
+      onUp?.();
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    }
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-label="Resize panels"
+      tabIndex={0}
+      onPointerDown={handlePointerDown}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowLeft") {
+          onResize(-10);
+        } else if (event.key === "ArrowRight") {
+          onResize(10);
+        }
+      }}
+      className="hidden w-2 shrink-0 cursor-col-resize items-center justify-center bg-transparent transition-colors hover:bg-emerald-100 active:bg-emerald-200 xl:flex"
+    >
+      <div className="flex flex-col gap-px">
+        <span className="block h-0.5 w-0.5 rounded-full bg-slate-400" />
+        <span className="block h-0.5 w-0.5 rounded-full bg-slate-400" />
+        <span className="block h-0.5 w-0.5 rounded-full bg-slate-400" />
+      </div>
+    </div>
+  );
+}
+
 function SlidePanel({
   title,
   isOpen,
@@ -725,7 +843,10 @@ function SlidePanel({
   return (
     <div
       className="fixed inset-y-0 right-0 z-40 w-full border-l border-slate-200 bg-white p-5 shadow-2xl"
-      style={{maxWidth: isResizable ? "calc(100vw - 24px)" : 448, width: isResizable ? width : "100%"}}
+      style={{
+        maxWidth: isResizable ? "calc(100vw - 24px)" : 448,
+        width: isResizable ? width : "100%",
+      }}
     >
       {isResizable ? (
         <div
@@ -735,7 +856,7 @@ function SlidePanel({
           className="absolute inset-y-0 left-0 w-2 cursor-col-resize bg-transparent hover:bg-emerald-200"
         />
       ) : null}
-      <div className="mb-5 flex items-center justify-between gap-4">
+      <div className="mb-5 flex items-center justify-between gap-0">
         <div className="flex items-center gap-2">
           <Palette size={18} className="text-emerald-700" />
           <h2 className="text-lg font-semibold text-slate-950">{title}</h2>
