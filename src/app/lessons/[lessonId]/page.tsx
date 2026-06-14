@@ -10,8 +10,8 @@ export default async function LessonDetailPage({
 
   return (
     <AuthGuard allowedRoles={["student", "teacher", "admin"]}>
-      <main className="h-dvh overflow-hidden bg-slate-100 p-4 text-slate-950">
-        <div className="mx-auto flex h-full max-w-7xl flex-col">
+      <main className="flex min-h-dvh flex-col bg-slate-100 p-4 text-slate-950 xl:h-dvh xl:overflow-hidden">
+        <div className="mx-auto flex flex-1 max-w-7xl flex-col xl:h-full">
           <LessonPlayer lessonId={lessonId} />
         </div>
       </main>

@@ -424,7 +424,7 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
         onLogout={logout}
       />
       <section
-        className="flex min-h-0 flex-1 flex-col gap-3"
+        className="flex flex-1 flex-col gap-3 overflow-y-auto"
         style={{backgroundColor: theme.background, color: theme.text}}
       >
         <button
@@ -440,16 +440,16 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
 
         <div
           ref={containerRef}
-          className="flex min-h-0 flex-1 flex-col gap-0 xl:flex-row"
+          className="flex flex-col gap-3 xl:min-h-0 xl:flex-1 xl:flex-row xl:gap-0"
         >
           <div
-            className="flex min-h-0 flex-col"
+            className="flex flex-col xl:min-h-0"
             style={{
               flex: xl ? `0 0 ${dividerPct}%` : undefined,
               minWidth: xl ? 200 : undefined,
             }}
           >
-            <div className="flex h-full min-h-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div className="flex overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm max-xl:min-h-[60vh] xl:h-full xl:min-h-0">
               {currentImage && !hideImage ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
@@ -494,14 +494,14 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
           <ResizableDivider onResize={handleDividerResize} onUp={handleDividerUp} />
 
           <div
-            className="flex min-h-0 flex-col"
+            className="flex flex-col xl:min-h-0"
             style={{
               flex: xl ? `1 1 ${100 - dividerPct}%` : undefined,
               minWidth: xl ? 200 : undefined,
             }}
           >
             <div
-              className="h-full min-h-0 overflow-y-auto rounded-lg border border-slate-200 bg-white p-6 shadow-sm"
+              className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm xl:h-full xl:min-h-0 xl:overflow-y-auto"
               style={{fontSize: theme.fontSize}}
             >
               {lyrics.length > 0 && !hideText ? (
