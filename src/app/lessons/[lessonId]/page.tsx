@@ -1,12 +1,12 @@
-import { AuthGuard } from "@/components/auth/AuthGuard";
-import { LessonPlayer } from "@/components/lesson/LessonPlayer";
+import {AuthGuard} from "@/components/auth/AuthGuard";
+import {LessonPlayer} from "@/components/lesson/LessonPlayer";
 
 export default async function LessonDetailPage({
   params,
 }: {
-  params: Promise<{ lessonId: string }>;
+  params: Promise<{lessonId: string}>;
 }) {
-  const { lessonId } = await params;
+  const {lessonId} = await params;
 
   return (
     <AuthGuard allowedRoles={["student", "teacher", "admin"]}>
