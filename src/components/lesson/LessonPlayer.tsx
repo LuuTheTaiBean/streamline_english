@@ -18,6 +18,8 @@ import {
   Repeat,
   Settings,
   X,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 
 import {LessonNotebook} from "@/components/lesson/LessonNotebook";
@@ -52,7 +54,6 @@ function parseLyrics(text: string) {
 
 function formatLessonCode(lesson: Lesson) {
   const unitNumber = lesson.unit.padStart(2, "0");
-
   return `${unitNumber}: ${lesson.title}`;
 }
 
@@ -91,6 +92,12 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
   const [xl, setXl] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const dividerPctRef = useRef(dividerPct);
+
+  // Trạng thái lưu câu trả lời và kết quả check đúng/sai của chế độ Dictation
+  const [userAnswers, setUserAnswers] = useState<Record<number, string>>({});
+  const [checkedLines, setCheckedLines] = useState<
+    Record<number, "correct" | "incorrect">
+  >({});
 
   useEffect(() => {
     dividerPctRef.current = dividerPct;
@@ -187,6 +194,8 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
       stopAtRef.current = null;
       resetRepeat();
       setCurrentImageIndex(0);
+      setUserAnswers({});
+      setCheckedLines({});
 
       if (!lesson?.lyricsUrl) {
         return;
@@ -238,7 +247,6 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
       const lineIndex = lockedIndex ?? activeIndex ?? 0;
       const lineStart = lyrics[lineIndex]?.time ?? 0;
       audio.pause();
-      // Stay inside the clicked line — do not land on the next line's timestamp.
       audio.currentTime = Math.max(lineStart, stopAtRef.current - 0.05);
       stopAtRef.current = null;
       setActiveIndex(lineIndex);
@@ -284,6 +292,58 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
     }
   }
 
+  // Tối ưu hoá việc làm sạch text để so sánh chính xác hơn
+  function cleanText(text: string) {
+    return text
+      .trim()
+      .toLowerCase()
+      .replace(/[’‘`]/g, "'")
+      .replace(/[.,\/#!$%\^&\*;:{}=\-_~()?]/g, "")
+      .replace(/\s+/g, " ");
+  }
+
+  // Hàm xử lý kiểm tra đáp án nghe-chép chính xác theo từng từ
+  function checkAnswer(index: number) {
+    const userAnswer = userAnswers[index] || "";
+    if (!userAnswer.trim()) return;
+
+    const correctText = lyrics[index].text;
+    const isCorrect = cleanText(userAnswer) === cleanText(correctText);
+
+    setCheckedLines((prev) => ({
+      ...prev,
+      [index]: isCorrect ? "correct" : "incorrect",
+    }));
+  }
+
+  // So sánh từng từ để highlight lỗi sai chính xác
+  function renderHighlightedError(correctText: string, userAnswer: string) {
+    const correctWords = correctText.split(/\s+/);
+    const userWords = cleanText(userAnswer).split(/\s+/);
+
+    return correctWords.map((word, idx) => {
+      const cleanedCorrect = cleanText(word);
+      const isWordMatch = userWords.includes(cleanedCorrect);
+
+      if (isWordMatch) {
+        return (
+          <span key={idx} className="mr-1 text-slate-700">
+            {word}
+          </span>
+        );
+      } else {
+        return (
+          <span
+            key={idx}
+            className="bg-red-100 border border-red-200 text-red-700 font-semibold px-1 rounded mr-1 shadow-sm line-through decoration-red-500 decoration-2 animate-fadeIn"
+          >
+            {word}
+          </span>
+        );
+      }
+    });
+  }
+
   function cycleImage() {
     if (!lesson || lesson.imageUrls.length <= 1) {
       setHideImage((value) => !value);
@@ -310,6 +370,12 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
     const audio = audioRef.current;
 
     if (!audio) {
+      return;
+    }
+
+    // Nếu bấm vào câu đang active và audio đang phát thì tạm dừng
+    if (activeIndex === index && isPlaying) {
+      audio.pause();
       return;
     }
 
@@ -491,7 +557,10 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
             />
           </div>
 
-          <ResizableDivider onResize={handleDividerResize} onUp={handleDividerUp} />
+          <ResizableDivider
+            onResize={handleDividerResize}
+            onUp={handleDividerUp}
+          />
 
           <div
             className="flex flex-col xl:min-h-0"
@@ -504,23 +573,139 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
               className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm xl:h-full xl:min-h-0 xl:overflow-y-auto"
               style={{fontSize: theme.fontSize}}
             >
-              {lyrics.length > 0 && !hideText ? (
-                <LyricsWithVocabMarks
-                  lessonId={lessonId}
-                  lyrics={lyrics}
-                  activeIndex={activeIndex}
-                  activeLineRef={activeLineRef}
-                  fontSize={theme.fontSize}
-                  onLineClick={playFromLine}
-                />
-              ) : hideText && lyrics.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setHideText(false)}
-                  className="flex h-full min-h-0 w-full items-center justify-center rounded-md bg-slate-50 text-sm font-semibold text-slate-500"
-                >
-                  Lyrics đang ẩn. Bấm để hiện lại.
-                </button>
+              {lyrics.length > 0 ? (
+                !hideText ? (
+                  /* HIỂN THỊ LYRICS BÌNH THƯỜNG */
+                  <LyricsWithVocabMarks
+                    lessonId={lessonId}
+                    lyrics={lyrics}
+                    activeIndex={activeIndex}
+                    activeLineRef={activeLineRef}
+                    fontSize={theme.fontSize}
+                    onLineClick={playFromLine}
+                  />
+                ) : (
+                  /* GIAO DIỆN DICTATION KHI ẨN CHỮ */
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-400 font-medium mb-2">
+                      Chế độ kiểm tra chính tả: Bấm nút đầu câu để nghe, gõ chữ
+                      rồi nhấn Enter.
+                    </p>
+                    {lyrics.map((line, index) => {
+                      const isCurrentActive = activeIndex === index;
+                      const status = checkedLines[index];
+
+                      // Thiết lập các nhóm màu bao khối bên ngoài dựa trên kết quả check đáp án
+                      let containerClasses = "";
+                      if (status === "correct") {
+                        // Trúng nhóm này khi câu trả lời hoàn toàn chính xác
+                        containerClasses =
+                          "border-green-400 bg-green-50/70 shadow-sm";
+                      } else if (status === "incorrect") {
+                        // Trúng nhóm này khi câu trả lời bị sai
+                        containerClasses =
+                          "border-red-400 bg-red-50/70 shadow-sm";
+                      } else if (isCurrentActive) {
+                        // Khi đang chọn/nghe dòng này nhưng chưa check kết quả
+                        containerClasses =
+                          "bg-slate-50 border-emerald-300 shadow-sm";
+                      } else {
+                        // Trạng thái bình thường
+                        containerClasses =
+                          "border-slate-200/60 bg-white hover:bg-slate-50/50";
+                      }
+
+                      return (
+                        <div
+                          key={index}
+                          ref={isCurrentActive ? (activeLineRef as any) : null}
+                          className={`flex flex-col gap-1.5 p-2 rounded-md transition-all duration-200 border ${containerClasses}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            {/* LUÔN LUÔN HIỂN THỊ ICON PLAY/PAUSE */}
+                            <button
+                              type="button"
+                              onClick={() => playFromLine(index)}
+                              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition ${
+                                isCurrentActive && isPlaying
+                                  ? "bg-emerald-600 text-white shadow-md animate-pulse"
+                                  : "bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-600"
+                              }`}
+                              title={
+                                isCurrentActive && isPlaying
+                                  ? "Tạm dừng"
+                                  : "Nghe câu này"
+                              }
+                            >
+                              {/* Chỉ phụ thuộc vào trạng thái chạy/dừng của audio */}
+                              {isCurrentActive && isPlaying ? (
+                                <Pause size={12} />
+                              ) : (
+                                <Play size={12} className="ml-0.5" />
+                              )}
+                            </button>
+
+                            {/* Ô nhập input */}
+                            <div className="relative flex-1">
+                              <input
+                                type="text"
+                                value={userAnswers[index] || ""}
+                                onChange={(e) =>
+                                  setUserAnswers((prev) => ({
+                                    ...prev,
+                                    [index]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    checkAnswer(index);
+                                  }
+                                }}
+                                onFocus={() => setActiveIndex(index)}
+                                placeholder={`Nghe và nhập câu số ${index + 1}...`}
+                                // Thay đổi class border linh hoạt theo status đúng/sai
+                                className={`w-full rounded border bg-white text-slate-800 px-3 py-1 text-sm outline-none transition pr-8 font-medium ${
+                                  status === "correct"
+                                    ? "border-green-400 focus:border-green-500 bg-white"
+                                    : status === "incorrect"
+                                      ? "border-red-400 focus:border-red-500 bg-white"
+                                      : "border-slate-200 focus:border-slate-400"
+                                }`}
+                              />
+                              {/* Icon tích đúng/sai bây giờ sẽ nằm cố định ở góc phải bên trong ô input */}
+                              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
+                                {status === "correct" && (
+                                  <CheckCircle2
+                                    size={14}
+                                    className="text-green-600"
+                                  />
+                                )}
+                                {status === "incorrect" && (
+                                  <XCircle size={14} className="text-red-600" />
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Hiển thị chi tiết lỗi sai nếu kiểm tra kết quả bị "incorrect" */}
+                          {status === "incorrect" && (
+                            <div className="pl-10 pr-2 text-xs transition-all duration-200">
+                              <div className="text-slate-500 font-medium leading-relaxed">
+                                <span className="font-bold text-red-600 mr-2">
+                                  Cần sửa lỗi:
+                                </span>
+                                {renderHighlightedError(
+                                  line.text,
+                                  userAnswers[index] || "",
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
               ) : (
                 <p className="text-sm text-slate-500">
                   Bai nay chua co lyrics.
@@ -747,7 +932,13 @@ function FloatingToolbar({
   );
 }
 
-function ResizableDivider({onResize, onUp}: {onResize: (clientX: number) => void; onUp?: () => void}) {
+function ResizableDivider({
+  onResize,
+  onUp,
+}: {
+  onResize: (clientX: number) => void;
+  onUp?: () => void;
+}) {
   const isDraggingRef = useRef(false);
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
