@@ -672,18 +672,6 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
                                       : "border-slate-200 focus:border-slate-400"
                                 }`}
                               />
-                              {/* Icon tích đúng/sai bây giờ sẽ nằm cố định ở góc phải bên trong ô input */}
-                              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center">
-                                {status === "correct" && (
-                                  <CheckCircle2
-                                    size={14}
-                                    className="text-green-600"
-                                  />
-                                )}
-                                {status === "incorrect" && (
-                                  <XCircle size={14} className="text-red-600" />
-                                )}
-                              </div>
                             </div>
                           </div>
 
@@ -692,7 +680,7 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
                             <div className="pl-10 pr-2 text-xs transition-all duration-200">
                               <div className="text-slate-500 font-medium leading-relaxed">
                                 <span className="font-bold text-red-600 mr-2">
-                                  Cần sửa lỗi:
+                                  Lỗi sai:
                                 </span>
                                 {renderHighlightedError(
                                   line.text,
