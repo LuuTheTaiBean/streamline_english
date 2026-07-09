@@ -13,11 +13,94 @@ import {
 import {GripVertical, Loader2, Save, Trash2, Volume2, X} from "lucide-react";
 
 import {loadLyricVocabMarks, saveLyricVocabMarks} from "@/lib/lyricVocabMarks";
-import type {LyricVocabMark} from "@/types/lyricVocabMark";
+
+// Định nghĩa hệ thống bảng màu gồm 10 màu Pastel nịnh mắt
+const HIGHLIGHT_COLORS = [
+  {
+    id: "yellow",
+    name: "Vàng",
+    bg: "bg-amber-200/90",
+    decoration: "decoration-amber-500/70",
+    dot: "bg-amber-400",
+  },
+  {
+    id: "green",
+    name: "Xanh lá",
+    bg: "bg-emerald-200/90",
+    decoration: "decoration-emerald-500/70",
+    dot: "bg-emerald-400",
+  },
+  {
+    id: "blue",
+    name: "Xanh dương",
+    bg: "bg-sky-200/90",
+    decoration: "decoration-sky-500/70",
+    dot: "bg-sky-400",
+  },
+  {
+    id: "pink",
+    name: "Hồng",
+    bg: "bg-rose-200/90",
+    decoration: "decoration-rose-500/70",
+    dot: "bg-rose-400",
+  },
+  {
+    id: "purple",
+    name: "Tím fuchsia",
+    bg: "bg-fuchsia-200/90",
+    decoration: "decoration-fuchsia-500/70",
+    dot: "bg-fuchsia-400",
+  },
+  {
+    id: "orange",
+    name: "Cam",
+    bg: "bg-orange-200/90",
+    decoration: "decoration-orange-500/70",
+    dot: "bg-orange-400",
+  },
+  {
+    id: "teal",
+    name: "Xanh ngọc",
+    bg: "bg-teal-200/90",
+    decoration: "decoration-teal-500/70",
+    dot: "bg-teal-400",
+  },
+  {
+    id: "indigo",
+    name: "Xanh chàm",
+    bg: "bg-indigo-200/90",
+    decoration: "decoration-indigo-500/70",
+    dot: "bg-indigo-400",
+  },
+  {
+    id: "violet",
+    name: "Tím violet",
+    bg: "bg-violet-200/90",
+    decoration: "decoration-violet-500/70",
+    dot: "bg-violet-400",
+  },
+  {
+    id: "lime",
+    name: "Xanh đọt chuối",
+    bg: "bg-lime-200/90",
+    decoration: "decoration-lime-500/70",
+    dot: "bg-lime-400",
+  },
+];
 
 type LyricLine = {
   time: number;
   text: string;
+};
+
+type LyricVocabMarkWithColor = {
+  id: string;
+  lineIndex: number;
+  start: number;
+  end: number;
+  word: string;
+  note: string;
+  color?: string;
 };
 
 type NotePanelState = {
@@ -31,14 +114,13 @@ type NotePanelState = {
   markId?: string;
   mode: "draft" | "hover";
   phonetics?: string;
+  color: string;
 };
 
 function stripHtml(html: string) {
-  // Loại bỏ HTML để tính toán vị trí marks
   if (typeof document === "undefined") {
     return html.replace(/<[^>]*>/g, "");
   }
-
   const element = document.createElement("div");
   element.innerHTML = html;
   return element.textContent ?? "";
@@ -46,17 +128,13 @@ function stripHtml(html: string) {
 
 function getSelectionInLine(lineElement: HTMLElement) {
   const selection = window.getSelection();
-
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
     return null;
   }
-
   const range = selection.getRangeAt(0);
-
   if (!lineElement.contains(range.commonAncestorContainer)) {
     return null;
   }
-
   const prefix = range.cloneRange();
   prefix.selectNodeContents(lineElement);
   prefix.setEnd(range.startContainer, range.startOffset);
@@ -64,13 +142,9 @@ function getSelectionInLine(lineElement: HTMLElement) {
   const start = prefix.toString().length;
   const selectedText = range.toString();
   const word = selectedText.trim();
-
-  if (!word) {
-    return null;
-  }
+  if (!word) return null;
 
   const leadingSpaces = selectedText.length - selectedText.trimStart().length;
-
   return {
     start: start + leadingSpaces,
     end: start + leadingSpaces + word.length,
@@ -93,16 +167,10 @@ function renderTextFragment(
   boldPrefix: string,
   keyPrefix: string,
 ) {
-  if (!boldPrefix) {
-    return text;
-  }
-
+  if (!boldPrefix) return text;
   const absoluteEnd = absoluteStart + text.length;
   const boldEnd = boldPrefix.length;
-
-  if (absoluteEnd <= 0 || absoluteStart >= boldEnd) {
-    return text;
-  }
+  if (absoluteEnd <= 0 || absoluteStart >= boldEnd) return text;
 
   const parts: ReactNode[] = [];
   const localBoldStart = Math.max(0 - absoluteStart, 0);
@@ -111,15 +179,12 @@ function renderTextFragment(
   if (localBoldStart > 0) {
     parts.push(text.slice(0, localBoldStart));
   }
-
   parts.push(
     <b key={`${keyPrefix}-bold`}>{text.slice(localBoldStart, localBoldEnd)}</b>,
   );
-
   if (localBoldEnd < text.length) {
     parts.push(text.slice(localBoldEnd));
   }
-
   return parts;
 }
 
@@ -127,8 +192,8 @@ function renderMarkedLine(
   plainText: string,
   originalHtml: string,
   lineIndex: number,
-  marks: LyricVocabMark[],
-  onMarkEnter: (mark: LyricVocabMark, element: HTMLElement) => void,
+  marks: LyricVocabMarkWithColor[],
+  onMarkEnter: (mark: LyricVocabMarkWithColor, element: HTMLElement) => void,
   onMarkLeave: () => void,
 ) {
   const lineMarks = marks
@@ -136,11 +201,9 @@ function renderMarkedLine(
     .sort((a, b) => a.start - b.start);
 
   if (lineMarks.length === 0) {
-    // Render HTML gốc khi không có marks
     return <span dangerouslySetInnerHTML={{__html: originalHtml}} />;
   }
 
-  // Khi có marks, render plain text để tránh bị lệch do HTML tags
   const boldPrefix = getBoldPrefix(originalHtml);
   const parts: ReactNode[] = [];
   let cursor = 0;
@@ -157,11 +220,14 @@ function renderMarkedLine(
       );
     }
 
+    const colorConfig =
+      HIGHLIGHT_COLORS.find((c) => c.id === mark.color) ?? HIGHLIGHT_COLORS[0];
+
     parts.push(
       <mark
         key={mark.id}
         data-vocab-mark="true"
-        className="cursor-help rounded-sm bg-amber-200/90 px-0.5 text-inherit underline decoration-amber-500/70 decoration-2 underline-offset-2"
+        className={`cursor-help rounded-sm px-0.5 text-inherit underline decoration-2 underline-offset-2 ${colorConfig.bg} ${colorConfig.decoration}`}
         onMouseEnter={(event) => onMarkEnter(mark, event.currentTarget)}
         onMouseLeave={onMarkLeave}
       >
@@ -173,7 +239,6 @@ function renderMarkedLine(
         )}
       </mark>,
     );
-
     cursor = Math.max(cursor, mark.end);
   });
 
@@ -187,13 +252,13 @@ function renderMarkedLine(
       ),
     );
   }
-
   return parts;
 }
 
 function FloatingVocabPanel({
   panel,
   onNoteChange,
+  onColorChange,
   onSave,
   onClose,
   onDelete,
@@ -206,6 +271,7 @@ function FloatingVocabPanel({
 }: {
   panel: NotePanelState;
   onNoteChange: (note: string) => void;
+  onColorChange?: (colorId: string) => void;
   onSave?: () => void;
   onClose: () => void;
   onDelete?: () => void;
@@ -220,7 +286,7 @@ function FloatingVocabPanel({
 
   return (
     <div
-      className="fixed z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-xl"
+      className="fixed z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-xl animate-in fade-in zoom-in-95 duration-150"
       style={{left: panel.x, top: panel.y}}
       onClick={(event) => event.stopPropagation()}
       onMouseDown={(event) => event.stopPropagation()}
@@ -233,24 +299,48 @@ function FloatingVocabPanel({
         }`}
         onPointerDown={isDraft ? onDragStart : undefined}
       >
-        <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-800">
-          {isDraft ? (
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-semibold text-slate-800">
+          {isDraft && (
             <GripVertical size={14} className="shrink-0 text-slate-400" />
-          ) : null}
+          )}
           <span className="truncate text-amber-800">{panel.word}</span>
         </div>
-        {isDraft ? (
+        {isDraft && (
           <button
             type="button"
             onClick={onClose}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100"
-            title="Dong"
+            title="Đóng"
           >
             <X size={14} />
           </button>
-        ) : null}
+        )}
       </div>
-      <div className="space-y-2 p-3">
+      <div className="space-y-3 p-3">
+        {/* LƯỚI CHỌN 10 MÀU SẮC HIGHLIGHT HÀNG LOẠT */}
+        {isDraft && onColorChange && (
+          <div className="space-y-1">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Màu Highlight
+            </label>
+            <div className="grid grid-cols-5 gap-2">
+              {HIGHLIGHT_COLORS.map((color) => (
+                <button
+                  key={color.id}
+                  type="button"
+                  onClick={() => onColorChange(color.id)}
+                  title={color.name}
+                  className={`h-5 w-5 justify-self-center rounded-full transition-all hover:scale-110 ${color.dot} ${
+                    panel.color === color.id
+                      ? "ring-2 ring-slate-800 ring-offset-2 scale-105"
+                      : "border border-slate-200"
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {!isDraft && panel.phonetics ? (
           <p className="text-sm font-semibold text-slate-600">
             {`/${panel.phonetics.replace(/^\/+|\/+$/g, "")}/`}
@@ -260,34 +350,34 @@ function FloatingVocabPanel({
           <textarea
             value={panel.note}
             onChange={(event) => onNoteChange(event.target.value)}
-            placeholder="Ghi nghia, ghi chu..."
+            placeholder="Ghi nghĩa, ghi chú..."
             className="min-h-24 w-full resize-y rounded-md border border-slate-300 p-2 text-sm outline-none focus:border-emerald-500"
             autoFocus
           />
         ) : (
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-            {panel.note || "(Chua co ghi chu)"}
+            {panel.note || "(Chưa có ghi chú)"}
           </p>
         )}
-        {isDraft ? (
+        {isDraft && onSave ? (
           <button
             type="button"
             onClick={onSave}
             className="flex w-full items-center justify-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
           >
             <Save size={14} />
-            Luu tu vung
+            Lưu từ vựng
           </button>
         ) : null}
         {!isDraft && (onPlayAudio || onDelete) ? (
           <div className="flex gap-2">
-            {onPlayAudio ? (
+            {onPlayAudio && (
               <button
                 type="button"
                 onClick={onPlayAudio}
                 disabled={isAudioLoading}
                 className="flex flex-1 items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-60"
-                title="Nghe phat am (Oxford)"
+                title="Nghe phát âm (Oxford)"
               >
                 {isAudioLoading ? (
                   <Loader2 size={14} className="animate-spin" />
@@ -296,22 +386,24 @@ function FloatingVocabPanel({
                 )}
                 Nghe
               </button>
-            ) : null}
-            {onDelete ? (
+            )}
+            {onDelete && (
               <button
                 type="button"
                 onClick={onDelete}
                 className="flex flex-1 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
-                title="Xoa highlight"
+                title="Xóa highlight"
               >
                 <Trash2 size={14} />
-                Xoa
+                Xóa
               </button>
-            ) : null}
+            )}
           </div>
         ) : null}
         {audioError ? (
-          <p className="text-xs text-red-600">{audioError}</p>
+          <p className="text-xs text-red-600 bg-red-50 p-1 rounded border border-red-100">
+            {audioError}
+          </p>
         ) : null}
         {!isDraft ? (
           <a
@@ -320,7 +412,7 @@ function FloatingVocabPanel({
             rel="noreferrer"
             className="block text-center text-xs text-slate-500 underline-offset-2 hover:text-emerald-700 hover:underline"
           >
-            Mo tren Oxford Learner&apos;s Dictionaries
+            Mở trên Oxford Learner&apos;s Dictionaries
           </a>
         ) : null}
       </div>
@@ -344,14 +436,13 @@ export function LyricsWithVocabMarks({
   onLineClick: (index: number) => void;
 }) {
   const lyricsRef = useRef<HTMLDivElement>(null);
-  const [marks, setMarks] = useState<LyricVocabMark[]>([]);
+  const [marks, setMarks] = useState<LyricVocabMarkWithColor[]>([]);
   const [draftPanel, setDraftPanel] = useState<NotePanelState | null>(null);
   const [hoverPanel, setHoverPanel] = useState<NotePanelState | null>(null);
   const dragOffsetRef = useRef({x: 0, y: 0});
   const hideHoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const pronunciationAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isAudioLoading, setIsAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState("");
 
@@ -361,7 +452,7 @@ export function LyricsWithVocabMarks({
   );
 
   const persistMarks = useCallback(
-    (nextMarks: LyricVocabMark[]) => {
+    (nextMarks: LyricVocabMarkWithColor[]) => {
       setMarks(nextMarks);
       saveLyricVocabMarks(lessonId, nextMarks);
     },
@@ -369,8 +460,9 @@ export function LyricsWithVocabMarks({
   );
 
   useEffect(() => {
-    const nextMarks = loadLyricVocabMarks(lessonId);
-
+    const nextMarks = loadLyricVocabMarks(
+      lessonId,
+    ) as LyricVocabMarkWithColor[];
     queueMicrotask(() => {
       setMarks(nextMarks);
       setDraftPanel(null);
@@ -380,16 +472,10 @@ export function LyricsWithVocabMarks({
 
   const openDraftAtSelection = useCallback(() => {
     const selection = window.getSelection();
-
-    if (!selection || selection.isCollapsed) {
-      return;
-    }
+    if (!selection || selection.isCollapsed) return;
 
     const anchorNode = selection.anchorNode;
-
-    if (!anchorNode) {
-      return;
-    }
+    if (!anchorNode) return;
 
     const lineElement = (
       anchorNode.nodeType === Node.TEXT_NODE
@@ -397,26 +483,18 @@ export function LyricsWithVocabMarks({
         : (anchorNode as HTMLElement)
     )?.closest<HTMLElement>("[data-lyric-line]");
 
-    if (!lineElement || !lyricsRef.current?.contains(lineElement)) {
-      return;
-    }
+    if (!lineElement || !lyricsRef.current?.contains(lineElement)) return;
 
     const lineIndex = Number(lineElement.dataset.lineIndex);
-
-    if (Number.isNaN(lineIndex)) {
-      return;
-    }
+    if (Number.isNaN(lineIndex)) return;
 
     const selected = getSelectionInLine(lineElement);
-
-    if (!selected) {
-      return;
-    }
+    if (!selected) return;
 
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
     const panelWidth = 288;
-    const panelHeight = 200;
+    const panelHeight = 260;
 
     setHoverPanel(null);
     setDraftPanel({
@@ -426,6 +504,7 @@ export function LyricsWithVocabMarks({
       end: selected.end,
       word: selected.word,
       note: "",
+      color: "yellow",
       x: clamp(rect.right + 12, 12, window.innerWidth - panelWidth - 12),
       y: clamp(rect.top, 12, window.innerHeight - panelHeight - 12),
     });
@@ -433,40 +512,29 @@ export function LyricsWithVocabMarks({
     selection.removeAllRanges();
   }, []);
 
-  function handleLyricsMouseUp() {
+  const handleLyricsMouseUp = useCallback(() => {
     window.setTimeout(() => {
-      if (draftPanel) {
-        return;
-      }
-
+      if (draftPanel) return;
       openDraftAtSelection();
     }, 0);
-  }
+  }, [draftPanel, openDraftAtSelection]);
 
-  function handleLineClick(
-    index: number,
-    event: ReactMouseEvent<HTMLDivElement>,
-  ) {
-    const selectionText = window.getSelection()?.toString().trim();
+  const handleLineClick = useCallback(
+    (index: number, event: ReactMouseEvent<HTMLDivElement>) => {
+      const selectionText = window.getSelection()?.toString().trim();
+      if (selectionText) return;
+      if ((event.target as HTMLElement).closest("[data-vocab-mark]")) return;
 
-    if (selectionText) {
-      return;
-    }
+      setDraftPanel(null);
+      onLineClick(index);
+    },
+    [onLineClick],
+  );
 
-    if ((event.target as HTMLElement).closest("[data-vocab-mark]")) {
-      return;
-    }
+  const handleSaveDraft = useCallback(() => {
+    if (!draftPanel) return;
 
-    setDraftPanel(null);
-    onLineClick(index);
-  }
-
-  function handleSaveDraft() {
-    if (!draftPanel) {
-      return;
-    }
-
-    const mark: LyricVocabMark = {
+    const mark: LyricVocabMarkWithColor = {
       id:
         draftPanel.markId ??
         (typeof crypto !== "undefined" && crypto.randomUUID
@@ -477,6 +545,7 @@ export function LyricsWithVocabMarks({
       end: draftPanel.end,
       word: draftPanel.word,
       note: draftPanel.note.trim(),
+      color: draftPanel.color,
     };
 
     const withoutDuplicate = marks.filter(
@@ -490,22 +559,26 @@ export function LyricsWithVocabMarks({
 
     persistMarks([...withoutDuplicate, mark]);
     setDraftPanel(null);
-  }
+  }, [draftPanel, marks, persistMarks]);
 
-  function clearHideHoverTimeout() {
+  const clearHideHoverTimeout = useCallback(() => {
     if (hideHoverTimeoutRef.current) {
       clearTimeout(hideHoverTimeoutRef.current);
       hideHoverTimeoutRef.current = null;
     }
-  }
+  }, []);
 
-  async function handlePlayPronunciation(word: string) {
+  const handlePlayPronunciation = useCallback(async (word: string) => {
+    const currentWord = word.trim();
+    if (!currentWord) return;
+
     setAudioError("");
     setIsAudioLoading(true);
 
     try {
       const response = await fetch(
-        `/api/oxford-pronunciation?word=${encodeURIComponent(word)}&lang=uk`,
+        `/api/oxford-pronunciation?word=${encodeURIComponent(currentWord)}&lang=uk&_t=${Date.now()}`,
+        {cache: "no-store"},
       );
       const data = (await response.json()) as {
         audioUrl?: string;
@@ -513,136 +586,131 @@ export function LyricsWithVocabMarks({
       };
 
       if (!response.ok || !data.audioUrl) {
-        setAudioError(data.error ?? "Khong tim thay phat am.");
+        setAudioError(data.error ?? "Không tìm thấy phát âm.");
         return;
       }
 
-      if (pronunciationAudioRef.current) {
-        pronunciationAudioRef.current.pause();
-      }
-
-      const audio = new Audio(data.audioUrl);
-      pronunciationAudioRef.current = audio;
-
+      const audio = new Audio(`${data.audioUrl}?_t=${Date.now()}`);
       await audio.play();
     } catch {
-      setAudioError("Khong the phat am. Thu lai sau.");
+      setAudioError("Không thể phát âm. Thử lại sau.");
     } finally {
       setIsAudioLoading(false);
     }
-  }
+  }, []);
 
-  function handleDeleteMark(markId: string) {
-    setMarks((current) => {
-      const next = current.filter((mark) => mark.id !== markId);
-      saveLyricVocabMarks(lessonId, next);
-      return next;
-    });
-    setHoverPanel(null);
-  }
+  const handleDeleteMark = useCallback(
+    (markId: string) => {
+      setMarks((current) => {
+        const next = current.filter((mark) => mark.id !== markId);
+        saveLyricVocabMarks(lessonId, next);
+        return next;
+      });
+      setHoverPanel(null);
+    },
+    [lessonId],
+  );
 
-  async function handleMarkEnter(mark: LyricVocabMark, element: HTMLElement) {
-    if (draftPanel) {
-      return;
-    }
+  const handleMarkEnter = useCallback(
+    async (mark: LyricVocabMarkWithColor, element: HTMLElement) => {
+      if (draftPanel) return;
 
-    clearHideHoverTimeout();
+      clearHideHoverTimeout();
 
-    const rect = element.getBoundingClientRect();
-    const panelWidth = 288;
-    const panelHeight = 160;
+      const rect = element.getBoundingClientRect();
+      const panelWidth = 288;
+      const panelHeight = 160;
+      const currentWord = mark.word.trim();
 
-    setAudioError("");
-    setHoverPanel({
-      mode: "hover",
-      markId: mark.id,
-      lineIndex: mark.lineIndex,
-      start: mark.start,
-      end: mark.end,
-      word: mark.word,
-      note: mark.note,
-      x: clamp(rect.right + 12, 12, window.innerWidth - panelWidth - 12),
-      y: clamp(rect.top, 12, window.innerHeight - panelHeight - 12),
-    });
+      setAudioError("");
+      setHoverPanel({
+        mode: "hover",
+        markId: mark.id,
+        lineIndex: mark.lineIndex,
+        start: mark.start,
+        end: mark.end,
+        word: mark.word,
+        note: mark.note,
+        color: mark.color ?? "yellow",
+        x: clamp(rect.right + 12, 12, window.innerWidth - panelWidth - 12),
+        y: clamp(rect.top, 12, window.innerHeight - panelHeight - 12),
+      });
 
-    // Fetch phonetics from Oxford
-    try {
-      const response = await fetch(
-        `/api/oxford-pronunciation?word=${encodeURIComponent(mark.word)}&lang=uk`,
-      );
-      const data = (await response.json()) as {
-        audioUrl?: string;
-        phonetics?: string;
-        error?: string;
-      };
-
-      if (data.phonetics) {
-        setHoverPanel((current) =>
-          current ? {...current, phonetics: data.phonetics} : current,
+      try {
+        const response = await fetch(
+          `/api/oxford-pronunciation?word=${encodeURIComponent(currentWord)}&lang=uk&_t=${Date.now()}`,
+          {cache: "no-store"},
         );
-      }
-    } catch {
-      // Silent fail - phonetics is optional
-    }
-  }
+        const data = (await response.json()) as {phonetics?: string};
 
-  function handleMarkLeave() {
+        if (data.phonetics) {
+          setHoverPanel((current) =>
+            current ? {...current, phonetics: data.phonetics} : current,
+          );
+        }
+      } catch {
+        // Silent fail
+      }
+    },
+    [draftPanel, clearHideHoverTimeout],
+  );
+
+  const handleMarkLeave = useCallback(() => {
     clearHideHoverTimeout();
     hideHoverTimeoutRef.current = setTimeout(() => {
       setHoverPanel(null);
     }, 180);
-  }
+  }, [clearHideHoverTimeout]);
 
-  function handleHoverPanelEnter() {
+  const handleHoverPanelEnter = useCallback(() => {
     clearHideHoverTimeout();
-  }
+  }, [clearHideHoverTimeout]);
 
-  function handleHoverPanelLeave() {
+  const handleHoverPanelLeave = useCallback(() => {
     setHoverPanel(null);
-  }
+  }, []);
 
-  function handleDragStart(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!draftPanel) {
-      return;
-    }
+  const handleDragStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!draftPanel) return;
+      event.preventDefault();
+      const startX = event.clientX - draftPanel.x;
+      const startY = event.clientY - draftPanel.y;
+      dragOffsetRef.current = {x: startX, y: startY};
 
-    event.preventDefault();
-    dragOffsetRef.current = {
-      x: event.clientX - draftPanel.x,
-      y: event.clientY - draftPanel.y,
-    };
+      const handleMove = (moveEvent: PointerEvent) => {
+        const panelWidth = 288;
+        const panelHeight = 260;
 
-    const handleMove = (moveEvent: PointerEvent) => {
-      const panelWidth = 288;
-      const panelHeight = 200;
+        setDraftPanel((current) =>
+          current
+            ? {
+                ...current,
+                x: clamp(
+                  moveEvent.clientX - dragOffsetRef.current.x,
+                  12,
+                  window.innerWidth - panelWidth - 12,
+                ),
+                y: clamp(
+                  moveEvent.clientY - dragOffsetRef.current.y,
+                  12,
+                  window.innerHeight - panelHeight - 12,
+                ),
+              }
+            : current,
+        );
+      };
 
-      setDraftPanel((current) =>
-        current
-          ? {
-              ...current,
-              x: clamp(
-                moveEvent.clientX - dragOffsetRef.current.x,
-                12,
-                window.innerWidth - panelWidth - 12,
-              ),
-              y: clamp(
-                moveEvent.clientY - dragOffsetRef.current.y,
-                12,
-                window.innerHeight - panelHeight - 12,
-              ),
-            }
-          : current,
-      );
-    };
+      const handleUp = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleUp);
+      };
 
-    const handleUp = () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-    };
-
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-  }
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleUp);
+    },
+    [draftPanel],
+  );
 
   return (
     <>
@@ -651,40 +719,43 @@ export function LyricsWithVocabMarks({
         className="space-y-0 select-text"
         onMouseUp={handleLyricsMouseUp}
       >
-        {/* eslint-disable-next-line react-hooks/refs */}
-        {lyrics.map((line, index) => (
-          <div
-            key={`${line.time}-${index}`}
-            data-lyric-line
-            data-line-index={index}
-            ref={
-              activeIndex !== null && index === activeIndex
-                ? activeLineRef
-                : null
-            }
-            onClick={(event) => handleLineClick(index, event)}
-            className={`mb-1 cursor-pointer whitespace-pre-line rounded-md text-base leading-6 transition ${
-              activeIndex !== null && index === activeIndex
-                ? "bg-emerald-100 font-semibold text-emerald-950"
-                : "text-slate-700 hover:bg-slate-100"
-            }`}
-            style={{fontSize}}
-          >
-            {renderMarkedLine(
-              plainLines[index] ?? "",
-              lyrics[index].text,
-              index,
-              marks,
-              handleMarkEnter,
-              handleMarkLeave,
-            )}
-          </div>
-        ))}
+        {lyrics.map((line, index) => {
+          const isCurrentActive = activeIndex !== null && index === activeIndex;
+          return (
+            <div
+              key={`${line.time}-${index}`}
+              data-lyric-line
+              data-line-index={index}
+              ref={isCurrentActive ? activeLineRef : null}
+              onClick={(event) => handleLineClick(index, event)}
+              className={`mb-1 cursor-pointer whitespace-pre-line rounded-md text-base leading-6 transition ${
+                isCurrentActive
+                  ? "bg-emerald-100 font-semibold text-emerald-950"
+                  : "text-slate-700 hover:bg-slate-100"
+              }`}
+              style={{fontSize}}
+            >
+              {renderMarkedLine(
+                plainLines[index] ?? "",
+                lyrics[index].text,
+                index,
+                marks,
+                handleMarkEnter,
+                handleMarkLeave,
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {draftPanel ? (
         <FloatingVocabPanel
           panel={draftPanel}
+          onColorChange={(colorId) =>
+            setDraftPanel((current) =>
+              current ? {...current, color: colorId} : current,
+            )
+          }
           onNoteChange={(note) =>
             setDraftPanel((current) => (current ? {...current, note} : current))
           }
