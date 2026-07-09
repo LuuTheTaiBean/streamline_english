@@ -1,6 +1,6 @@
 const oxfordBase = "https://www.oxfordlearnersdictionaries.com";
 const userAgent =
-  "Mozilla/5.0 (compatible; StreamlineEnglish/1.0; +https://www.oxfordlearnersdictionaries.com)";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
 export function normalizeOxfordWord(raw: string) {
   const cleaned = raw
@@ -12,14 +12,17 @@ export function normalizeOxfordWord(raw: string) {
 }
 
 function extractAudioUrls(html: string) {
-  const matches = html.matchAll(
-    /(?:https:\/\/www\.oxfordlearnersdictionaries\.com)?(\/media\/english\/(?:uk_pron|us_pron)\/[^"'\\s]+\.mp3)/gi,
-  );
-
+  // SỬA ĐỔI QUAN TRỌNG: Chỉ tìm thuộc tính data-src-mp3="..." chính quy của nút phát âm
+  const matches = html.matchAll(/data-src-mp3=["']([^"']+\.mp3)["']/gi);
   const urls = new Set<string>();
 
   for (const match of matches) {
-    urls.add(`${oxfordBase}${match[1]}`);
+    let path = match[1];
+    // Nếu là đường dẫn tương đối, nối thêm domain gốc vào
+    if (!path.startsWith("http")) {
+      path = `${oxfordBase}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+    urls.add(path);
   }
 
   return [...urls];
@@ -27,13 +30,28 @@ function extractAudioUrls(html: string) {
 
 function extractPhonetics(html: string, lang: "uk" | "us") {
   const phonClass = lang === "uk" ? "phon" : "us";
-  const regex = new RegExp(`<span class="${phonClass}">([^<]+)</span>`, "i");
+
+  // SỬA ĐỔI QUAN TRỌNG: Giới hạn khu vực quét nằm trong class phons_br (UK) hoặc phons_n_am (US)
+  const wrapperClass = lang === "uk" ? "phons_br" : "phons_n_am";
+  const regex = new RegExp(
+    `class=["']${wrapperClass}["'][^>]*>.*?<span class=["']${phonClass}["'][^>]*>([^<]+)</span>`,
+    "i",
+  );
   const match = html.match(regex);
 
-  return match ? match[1].trim() : null;
+  if (match) return match[1].trim();
+
+  // Phương án dự phòng nếu cấu trúc trang tối giản
+  const fallbackRegex = new RegExp(
+    `<span class=["']${phonClass}["'][^>]*>([^<]+)</span>`,
+    "i",
+  );
+  const fallbackMatch = html.match(fallbackRegex);
+  return fallbackMatch ? fallbackMatch[1].trim() : null;
 }
 
 function pickAudioUrl(urls: string[], lang: "uk" | "us") {
+  // Lọc chính xác tệp âm thanh theo vùng ngôn ngữ
   const preferred = urls.find((url) =>
     lang === "uk" ? url.includes("/uk_pron/") : url.includes("/us_pron/"),
   );
@@ -47,7 +65,7 @@ async function fetchDefinitionHtml(word: string) {
 
   const response = await fetch(definitionUrl, {
     headers: {"User-Agent": userAgent},
-    next: {revalidate: 60 * 60 * 24},
+    cache: "no-store", // Ép không lưu cache fetch tĩnh
   });
 
   if (response.ok) {
@@ -57,7 +75,7 @@ async function fetchDefinitionHtml(word: string) {
   const searchUrl = `${oxfordBase}/search/english/?q=${slug}`;
   const searchResponse = await fetch(searchUrl, {
     headers: {"User-Agent": userAgent},
-    next: {revalidate: 60 * 60 * 24},
+    cache: "no-store",
   });
 
   if (!searchResponse.ok) {
@@ -75,7 +93,7 @@ async function fetchDefinitionHtml(word: string) {
 
   const entryResponse = await fetch(`${oxfordBase}${entryMatch[1]}`, {
     headers: {"User-Agent": userAgent},
-    next: {revalidate: 60 * 60 * 24},
+    cache: "no-store",
   });
 
   if (!entryResponse.ok) {
