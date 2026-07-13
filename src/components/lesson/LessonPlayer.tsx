@@ -29,6 +29,11 @@ import {logout} from "@/lib/auth";
 import {loadDividerPct, saveDividerPct} from "@/lib/lessonLayout";
 import type {Lesson} from "@/types/lesson";
 
+// Import kết nối Firebase từ file của bạn
+import {db, auth} from "@/lib/firebase";
+import {doc, getDoc, setDoc, deleteDoc} from "firebase/firestore";
+import {onAuthStateChanged} from "firebase/auth";
+
 type LyricLine = {
   time: number;
   text: string;
@@ -93,11 +98,92 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dividerPctRef = useRef(dividerPct);
 
+  // Lưu thông tin userId hiện tại từ Firebase Auth
+  const [userId, setUserId] = useState<string | null>(null);
+
   // Trạng thái lưu câu trả lời và kết quả check đúng/sai của chế độ Dictation
   const [userAnswers, setUserAnswers] = useState<Record<number, string>>({});
   const [checkedLines, setCheckedLines] = useState<
     Record<number, "correct" | "incorrect">
   >({});
+
+  // 1. Lắng nghe trạng thái đăng nhập của User
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Tải dữ liệu cũ từ Firebase Firestore khi thay đổi Bài học hoặc User thay đổi
+  useEffect(() => {
+    async function loadDictationFromFirebase() {
+      if (!userId || !lessonId) {
+        setUserAnswers({});
+        setCheckedLines({});
+        return;
+      }
+
+      try {
+        const docRef = doc(db, "users", userId, "dictation", lessonId);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setUserAnswers(data.userAnswers || {});
+          setCheckedLines(data.checkedLines || {});
+        } else {
+          setUserAnswers({});
+          setCheckedLines({});
+        }
+      } catch (err) {
+        console.error("Lỗi khi lấy dữ liệu từ Firebase:", err);
+      }
+    }
+
+    loadDictationFromFirebase();
+  }, [lessonId, userId]);
+
+  // 3. Hàm lưu câu trả lời lên Firebase (Bao gồm chữ đã gõ và trạng thái check đúng/sai)
+  const saveToFirebase = async (
+    answers: Record<number, string>,
+    checked: Record<number, "correct" | "incorrect">,
+  ) => {
+    if (!userId) return; // Nếu chưa đăng nhập thì không lưu được trên Cloud
+    try {
+      const docRef = doc(db, "users", userId, "dictation", lessonId);
+      await setDoc(
+        docRef,
+        {
+          userAnswers: answers,
+          checkedLines: checked,
+          updatedAt: new Date(),
+        },
+        {merge: true},
+      );
+    } catch (err) {
+      console.error("Lỗi khi lưu dữ liệu lên Firebase:", err);
+    }
+  };
+
+  // Hàm xóa toàn bộ dữ liệu của bài học hiện tại trên Firebase
+  const handleClearAll = async () => {
+    if (!userId) return;
+    if (confirm("Bạn có chắc chắn muốn xóa toàn bộ nội dung đã gõ không?")) {
+      setUserAnswers({});
+      setCheckedLines({});
+      try {
+        const docRef = doc(db, "users", userId, "dictation", lessonId);
+        await deleteDoc(docRef);
+      } catch (err) {
+        console.error("Lỗi khi xóa dữ liệu trên Firebase:", err);
+      }
+    }
+  };
 
   useEffect(() => {
     dividerPctRef.current = dividerPct;
@@ -194,8 +280,6 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
       stopAtRef.current = null;
       resetRepeat();
       setCurrentImageIndex(0);
-      setUserAnswers({});
-      setCheckedLines({});
 
       if (!lesson?.lyricsUrl) {
         return;
@@ -310,10 +394,13 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
     const correctText = lyrics[index].text;
     const isCorrect = cleanText(userAnswer) === cleanText(correctText);
 
-    setCheckedLines((prev) => ({
-      ...prev,
-      [index]: isCorrect ? "correct" : "incorrect",
-    }));
+    const nextChecked = {
+      ...checkedLines,
+      [index]: isCorrect ? ("correct" as const) : ("incorrect" as const),
+    };
+
+    setCheckedLines(nextChecked);
+    saveToFirebase(userAnswers, nextChecked);
   }
 
   // So sánh từng từ để highlight lỗi sai chính xác
@@ -587,10 +674,27 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
                 ) : (
                   /* GIAO DIỆN DICTATION KHI ẨN CHỮ */
                   <div className="space-y-3">
-                    <p className="text-xs text-slate-400 font-medium mb-2">
-                      Chế độ kiểm tra chính tả: Bấm nút đầu câu để nghe, gõ chữ
-                      rồi nhấn Enter.
-                    </p>
+                    <div className="flex items-center justify-between gap-4 border-b border-slate-100 pb-2 mb-2">
+                      <p className="text-xs text-slate-400 font-medium">
+                        Chế độ kiểm tra chính tả: Bấm nút đầu câu để nghe, gõ
+                        chữ rồi nhấn Enter.{" "}
+                        {!userId && (
+                          <span className="text-amber-500 font-bold ml-1">
+                            (Chưa đăng nhập - Dữ liệu sẽ không lưu lên đám mây)
+                          </span>
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleClearAll}
+                        className="flex items-center gap-1 rounded bg-red-50 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 transition shadow-sm"
+                        title="Xóa toàn bộ nội dung đã gõ"
+                      >
+                        <X size={12} />
+                        <span>Xóa toàn bộ</span>
+                      </button>
+                    </div>
+
                     {lyrics.map((line, index) => {
                       const isCurrentActive = activeIndex === index;
                       const status = checkedLines[index];
@@ -650,12 +754,23 @@ export function LessonPlayer({lessonId}: {lessonId: string}) {
                               <input
                                 type="text"
                                 value={userAnswers[index] || ""}
-                                onChange={(e) =>
-                                  setUserAnswers((prev) => ({
-                                    ...prev,
+                                onChange={(e) => {
+                                  const nextAnswers = {
+                                    ...userAnswers,
                                     [index]: e.target.value,
-                                  }))
-                                }
+                                  };
+                                  setUserAnswers(nextAnswers);
+
+                                  // Nếu người dùng thay đổi chữ, reset trạng thái checked cũ để họ kiểm tra lại
+                                  const nextChecked = {...checkedLines};
+                                  if (status) {
+                                    delete nextChecked[index];
+                                    setCheckedLines(nextChecked);
+                                  }
+
+                                  // Lưu real-time ký tự gõ lên Firebase
+                                  saveToFirebase(nextAnswers, nextChecked);
+                                }}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter") {
                                     checkAnswer(index);
